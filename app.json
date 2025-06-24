@@ -32,7 +32,9 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "react-native-vision-camera",
+      "react-native-video"
     ],
     "extra": {
       "router": {},

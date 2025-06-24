@@ -1,0 +1,64 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isNotBlocked(userId) {
+      // Check if the requesting user is in the target user's blocked list.
+      let isBlockedByTarget = exists(/databases/$(database)/documents/users/$(userId)/blockedUsers/$(request.auth.uid));
+      // Check if the target user is in the requesting user's blocked list.
+      let isTargetBlockedByRequester = exists(/databases/$(database)/documents/users/$(request.auth.uid)/blockedUsers/$(userId));
+      return !isBlockedByTarget && !isTargetBlockedByRequester;
+    }
+
+    // Users can only manage their own profile.
+    // Allow reads if users are friends.
+    match /users/{userId} {
+      allow read: if request.auth.uid == userId || 
+                   (exists(/databases/$(database)/documents/users/$(request.auth.uid)/friends/$(userId)) && isNotBlocked(userId));
+      allow create, update, delete: if request.auth.uid == userId;
+
+      // Friends subcollection
+      match /friends/{friendId} {
+        allow read, create, delete: if request.auth.uid == userId;
+      }
+
+      match /blockedUsers/{blockedId} {
+        allow read, create, delete: if request.auth.uid == userId;
+      }
+    }
+
+    // Messages can be created by the sender, and read only by sender or recipient.
+    // No updates or deletes from the client.
+    match /messages/{messageId} {
+      allow create: if request.auth.uid == request.resource.data.senderId && isNotBlocked(request.resource.data.recipientId);
+      allow read: if (request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.recipientId) && isNotBlocked(resource.data.senderId) && isNotBlocked(resource.data.recipientId);
+      allow update, delete: if false;
+
+      // Receipts can be created by the recipient.
+      // Receipts can be read by sender or recipient of parent message.
+      // Receipt owner can update their own receipt.
+      match /receipts/{userId} {
+        allow create: if request.auth.uid == userId && request.auth.uid == get(/databases/$(database)/documents/messages/$(messageId)).data.recipientId;
+        allow read: if request.auth.uid == get(/databases/$(database)/documents/messages/$(messageId)).data.senderId || request.auth.uid == get(/databases/$(database)/documents/messages/$(messageId)).data.recipientId;
+        allow update: if request.auth.uid == userId;
+        allow delete: if false;
+      }
+    }
+
+    // Rules for friend requests
+    match /friendRequests/{requestId} {
+      // Allow creation if the sender is the authenticated user.
+      allow create: if request.auth.uid == request.resource.data.senderId && isNotBlocked(request.resource.data.recipientId);
+      
+      // Allow read if the user is the sender or the recipient.
+      allow read: if request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.recipientId;
+
+      // Allow the recipient to update the status (accept/decline).
+      allow update: if request.auth.uid == resource.data.recipientId;
+
+      // Allow the sender to delete (cancel) the request.
+      allow delete: if request.auth.uid == resource.data.senderId;
+    }
+  }
+} 

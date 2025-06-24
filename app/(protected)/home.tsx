@@ -2,7 +2,6 @@ import { View, Text, TouchableOpacity, FlatList } from "react-native";
 import { useAuth } from "../../store/useAuth";
 import { Link } from "expo-router";
 import { useEffect, useState } from "react";
-import { Platform } from "react-native";
 import { firestore } from "../../lib/firebase";
 import { Message } from "../../models/firestore/message";
 import MessageItem from "../../components/MessageItem";
@@ -22,33 +21,14 @@ const Home = () => {
 
     console.log('[Home] Setting up message listener for user:', user.uid);
 
-    if (Platform.OS === 'web') {
-      // For web, use mock messages
-      console.log('[Home] Using mock messages for web');
-      const mockMessages: Message[] = [
-        {
-          id: 'mock-1',
-          senderId: 'mock-sender',
-          recipientId: user.uid,
-          mediaType: 'image',
-          mediaURL: 'mock://photo.jpg',
-          ttlPreset: '30s',
-          sentAt: { seconds: Date.now() / 1000, nanoseconds: 0 } as any,
-          text: null
-        }
-      ];
-      setMessages(mockMessages);
-      return;
-    }
-
-    // For mobile, use actual Firestore
     try {
+      // Use unified Firebase API
       const q = firestore.collection("messages").where("recipientId", "==", user.uid);
       
-      const unsubscribe = q.onSnapshot((snapshot: any) => {
+      const unsubscribe = q.onSnapshot((snapshot) => {
         console.log('[Home] Received', snapshot.docs.length, 'messages');
         const newMessages: Message[] = [];
-        snapshot.forEach((doc: any) => {
+        snapshot.forEach((doc) => {
           const message = { id: doc.id, ...doc.data() } as Message;
           newMessages.push(message);
           if (!loggedReceived.includes(message.id)) {
@@ -108,11 +88,6 @@ const Home = () => {
         ListHeaderComponent={() => (
           <View className="p-4 items-center">
             <Text className="text-xl font-semibold mb-2">Your Messages 📬</Text>
-            {Platform.OS === 'web' && (
-              <Text className="text-sm text-blue-500 mb-4">
-                🌐 Running in web mode with mock data
-              </Text>
-            )}
             {messages.length === 0 && (
               <Text className="text-gray-500 text-center mt-8">
                 No messages yet! Take a snap with the camera and send it to friends! 📸

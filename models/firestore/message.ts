@@ -1,5 +1,10 @@
-import { Timestamp } from 'firebase/firestore';
 import { TtlPreset } from '../../config/messaging';
+
+// Use a platform-agnostic timestamp type that works for both web and mobile
+export type FirestoreTimestamp = {
+  seconds: number;
+  nanoseconds: number;
+} | Date;
 
 export type MediaType = 'image' | 'video' | 'text';
 
@@ -10,6 +15,6 @@ export interface Message {
   mediaURL: string | null; // Null for text messages
   mediaType: MediaType;
   ttlPreset: TtlPreset;
-  sentAt: Timestamp;
+  sentAt: FirestoreTimestamp;
   text: string | null; // For text messages
 } 

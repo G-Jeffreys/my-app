@@ -4,7 +4,6 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { firestore, storage } from '../../lib/firebase';
 import { useAuth } from '../../store/useAuth';
 import { ANALYTICS_EVENTS, logEvent } from '../../lib/analytics';
-import { Platform } from 'react-native';
 import Header from '../../components/Header';
 
 const TTL_PRESETS = ['30s', '1m', '5m', '1h', '6h', '24h'];
@@ -18,15 +17,18 @@ const PreviewScreen = () => {
     const fetchDefaultTtl = async () => {
       if (!user) return;
       
-      if (Platform.OS === 'web') {
-        // Mock default TTL for web
-        setSelectedTtl('1h');
-      } else {
+      console.log('[Preview] Fetching default TTL for user:', user.uid);
+      
+      try {
+        // Use unified Firebase API
         const userRef = firestore.collection('users').doc(user.uid);
         const userSnap = await userRef.get();
         if (userSnap.exists() && userSnap.data()?.defaultTtl) {
           setSelectedTtl(userSnap.data()!.defaultTtl);
+          console.log('[Preview] Using saved default TTL:', userSnap.data()!.defaultTtl);
         }
+      } catch (error) {
+        console.error('[Preview] Error fetching default TTL:', error);
       }
     };
     fetchDefaultTtl();
@@ -36,40 +38,28 @@ const PreviewScreen = () => {
     if (!uri || !user || !mediaType || !recipientId) return;
 
     try {
-      console.log(`Uploading ${mediaType}...`);
+      console.log(`[Preview] Uploading ${mediaType}...`);
       
-      let downloadURL: string;
+      // Use unified Firebase API for upload
+      const response = await fetch(uri);
+      const blob = await response.blob();
+
+      const storageRef = storage.ref(`media/${user.uid}/${Date.now()}`);
       
-      if (Platform.OS === 'web') {
-        // Mock upload for web
-        console.log('[Preview] Mock upload for web');
-        downloadURL = `mock://uploaded-${mediaType}-${Date.now()}`;
-      } else {
-        // Actual upload for mobile
-        const response = await fetch(uri);
-        const blob = await response.blob();
+      await storageRef.put(blob);
+      const downloadURL = await storageRef.getDownloadURL();
+      console.log(`[Preview] ${mediaType} uploaded:`, downloadURL);
 
-        const storageRef = storage.ref(`media/${user.uid}/${Date.now()}`);
-        
-        await storageRef.put(blob);
-        downloadURL = await storageRef.getDownloadURL();
-        console.log(`${mediaType} uploaded:`, downloadURL);
-      }
-
-      if (Platform.OS === 'web') {
-        // Mock Firestore operation for web
-        console.log('[Preview] Mock message document created');
-      } else {
-        await firestore.collection('messages').add({
-          senderId: user.uid,
-          recipientId: recipientId,
-          mediaURL: downloadURL,
-          mediaType: mediaType,
-          ttlPreset: selectedTtl,
-          sentAt: firestore.FieldValue.serverTimestamp(),
-        });
-        console.log('Message document created.');
-      }
+      // Create message document using unified API
+      await firestore.collection('messages').add({
+        senderId: user.uid,
+        recipientId: recipientId,
+        mediaURL: downloadURL,
+        mediaType: mediaType,
+        ttlPreset: selectedTtl,
+        sentAt: firestore.FieldValue.serverTimestamp(),
+      });
+      console.log('[Preview] Message document created.');
       
       await logEvent(ANALYTICS_EVENTS.MEDIA_SENT, {
         mediaType,
@@ -79,7 +69,7 @@ const PreviewScreen = () => {
 
       router.replace('/(protected)/home');
     } catch (error) {
-      console.error('Error sending message: ', error);
+      console.error('[Preview] Error sending message: ', error);
       // TODO: show an error message to the user
     }
   };
@@ -89,45 +79,17 @@ const PreviewScreen = () => {
   };
 
   const renderMedia = () => {
-    if (Platform.OS === 'web' && uri?.startsWith('mock://')) {
-      // Mock media display for web
-      return (
-        <View style={[styles.image, styles.mockMedia]}>
-          <Text style={styles.mockMediaText}>
-            {mediaType === 'photo' ? '📷' : '🎥'}
-          </Text>
-          <Text style={styles.mockMediaSubtext}>
-            Mock {mediaType === 'photo' ? 'Photo' : 'Video'}
-          </Text>
-          <Text style={styles.mockMediaPath}>
-            {uri}
-          </Text>
-        </View>
-      );
-    }
-
     if (mediaType === 'photo') {
       return <Image source={{ uri }} style={styles.image} />;
     } else {
-      // For video, we'd normally use react-native-video, but let's mock it for web
-      if (Platform.OS === 'web') {
-        return (
-          <View style={[styles.video, styles.mockMedia]}>
-            <Text style={styles.mockMediaText}>🎥</Text>
-            <Text style={styles.mockMediaSubtext}>Mock Video Player</Text>
-          </View>
-        );
-      } else {
-        const Video = require('react-native-video').default;
-        return (
-          <Video
-            source={{ uri }}
-            style={styles.video}
-            resizeMode="contain"
-            repeat={true}
-          />
-        );
-      }
+      // For video, we'd normally use react-native-video
+      // For now, show a placeholder
+      return (
+        <View style={[styles.video, styles.mockMedia]}>
+          <Text style={styles.mockMediaText}>🎥</Text>
+          <Text style={styles.mockMediaSubtext}>Video Preview</Text>
+        </View>
+      );
     }
   };
 
@@ -200,97 +162,92 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: 'black',
+    padding: 16,
   },
   image: {
-    flex: 1,
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: 8,
   },
   video: {
-    flex: 1,
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: 8,
+    backgroundColor: '#000',
   },
   mockMedia: {
-    backgroundColor: '#f0f0f0',
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#f0f0f0',
   },
   mockMediaText: {
-    fontSize: 48,
-    marginBottom: 10,
+    fontSize: 60,
   },
   mockMediaSubtext: {
-    fontSize: 18,
+    fontSize: 16,
     color: '#666',
-    marginBottom: 10,
-  },
-  mockMediaPath: {
-    fontSize: 12,
-    color: '#999',
-    fontFamily: 'monospace',
+    marginTop: 8,
   },
   bottomContainer: {
-    position: 'absolute',
-    bottom: 30,
-    left: 0,
-    right: 0,
-  },
-  sendContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
     marginTop: 20,
   },
-  selectFriendButton: {
-    backgroundColor: '#333',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+  ttlContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 20,
+  },
+  ttlButton: {
+    backgroundColor: '#e0e0e0',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 20,
+    margin: 4,
+  },
+  ttlButtonSelected: {
+    backgroundColor: '#007AFF',
+  },
+  ttlButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  sendContainer: {
+    gap: 12,
+  },
+  selectFriendButton: {
+    backgroundColor: '#f0f0f0',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
   },
   selectFriendButtonText: {
-    color: 'white',
     fontSize: 16,
+    fontWeight: '600',
   },
   sendButton: {
-    backgroundColor: '#007BFF',
-    paddingHorizontal: 30,
-    paddingVertical: 10,
-    borderRadius: 20,
+    backgroundColor: '#007AFF',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
   },
   sendButtonDisabled: {
-    backgroundColor: '#999',
+    backgroundColor: '#ccc',
   },
   sendButtonText: {
     color: 'white',
     fontSize: 16,
-  },
-  ttlContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 10,
-    marginBottom: 20,
-  },
-  ttlButton: {
-    padding: 10,
-    borderRadius: 5,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  ttlButtonSelected: {
-    backgroundColor: '#007BFF',
-  },
-  ttlButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
+    fontWeight: '600',
   },
   closeButton: {
-    position: 'absolute',
-    top: 50,
-    right: 20,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    padding: 10,
-    borderRadius: 20,
+    backgroundColor: '#007AFF',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 20,
   },
   closeButtonText: {
     color: 'white',
     fontSize: 16,
+    fontWeight: '600',
   },
 });
 

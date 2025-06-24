@@ -1,6 +1,10 @@
-import { Timestamp } from 'firebase/firestore';
+// Use a platform-agnostic timestamp type that works for both web and mobile
+export type FirestoreTimestamp = {
+  seconds: number;
+  nanoseconds: number;
+} | Date;
 
 export interface Friend {
   friendId: string; // UID of the friend
-  friendedAt: Timestamp;
+  addedAt: FirestoreTimestamp;
 } 

@@ -55,7 +55,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       
       console.log('[Auth] Auth instance validated, setting up listener...');
       
-      // Set up auth state listener
+      // Set up auth state listener - correct v22+ pattern without extra parameters
       const unsubscribe = auth.onAuthStateChanged((user: any) => {
         console.log('[Auth] Auth state changed:', { user: user?.email });
         set({ 
@@ -152,6 +152,7 @@ export const useAuth = create<AuthState>((set, get) => ({
           signInResponse.data.idToken
         );
         
+        // Use the correct v22 pattern for signInWithCredential - no extra auth parameter needed
         const userCredential = await auth.signInWithCredential(googleCredential);
         console.log('[Auth] Successfully signed in with Firebase:', userCredential.user.email);
       }
@@ -203,6 +204,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       } else {
         const { GoogleSignin } = require("@react-native-google-signin/google-signin");
         await GoogleSignin.signOut();
+        // Use the correct v22 pattern for signOut - no extra auth parameter needed
         await auth.signOut();
       }
       console.log('[Auth] Successfully signed out');

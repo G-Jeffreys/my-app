@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { firestore } from '../../lib/firebase';
 import { useAuth } from '../../store/useAuth';
 import { User } from '../../models/firestore/user';
-import { Platform } from 'react-native';
 import Header from '../../components/Header';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Toast from '../../components/Toast';
@@ -30,39 +29,31 @@ const AddFriend = () => {
     }
     setLoading(true);
     try {
-      let users: User[] = [];
+      console.log('[AddFriend] Searching for users with email:', searchEmail);
       
-      if (Platform.OS === 'web') {
-        // Web Firebase
-        const { collection, query, where, getDocs } = require('firebase/firestore');
-        const usersRef = collection(firestore, 'users');
-        const q = query(usersRef, where('email', '==', searchEmail.toLowerCase()));
-        const querySnapshot = await getDocs(q);
-        querySnapshot.forEach((doc: any) => {
-          if (doc.data().id !== user?.uid) {
-            users.push({ id: doc.id, ...doc.data() } as User);
-          }
-        });
-      } else {
-        // React Native Firebase
-        const usersRef = firestore.collection('users');
-        const q = usersRef.where('email', '==', searchEmail.toLowerCase());
-        const querySnapshot = await q.get();
-        querySnapshot.forEach((doc: any) => {
-          if (doc.data().id !== user?.uid) {
-            users.push({ id: doc.id, ...doc.data() } as User);
-          }
-        });
-      }
+      // Use unified Firebase API
+      const usersRef = firestore.collection('users');
+      const q = usersRef.where('email', '==', searchEmail.toLowerCase());
+      const querySnapshot = await q.get();
       
+      const users: User[] = [];
+      querySnapshot.forEach((doc) => {
+        const userData = doc.data();
+        if (userData.id !== user?.uid) {
+          users.push({ id: doc.id, ...userData } as User);
+        }
+      });
+      
+      console.log('[AddFriend] Found users:', users);
       setSearchResults(users);
+      
       if (users.length === 0) {
         showToast('No user found with that email.', 'info');
       } else {
         showToast(`Found ${users.length} user${users.length > 1 ? 's' : ''}!`, 'success');
       }
     } catch (error) {
-      console.error('Error searching for users:', error);
+      console.error('[AddFriend] Error searching for users:', error);
       showToast('An error occurred while searching for users.', 'error');
     } finally {
       setLoading(false);
@@ -72,29 +63,21 @@ const AddFriend = () => {
   const sendFriendRequest = async (recipientId: string) => {
     if (!user) return;
     try {
-      if (Platform.OS === 'web') {
-        // Web Firebase
-        const { collection, addDoc, serverTimestamp } = require('firebase/firestore');
-        const requestsRef = collection(firestore, 'friendRequests');
-        await addDoc(requestsRef, {
-          senderId: user.uid,
-          recipientId,
-          status: 'pending',
-          createdAt: serverTimestamp(),
-        });
-      } else {
-        // React Native Firebase
-        const requestsRef = firestore.collection('friendRequests');
-        await requestsRef.add({
-          senderId: user.uid,
-          recipientId,
-          status: 'pending',
-          createdAt: firestore.FieldValue.serverTimestamp(),
-        });
-      }
+      console.log('[AddFriend] Sending friend request to:', recipientId);
+      
+      // Use unified Firebase API
+      const requestsRef = firestore.collection('friendRequests');
+      await requestsRef.add({
+        senderId: user.uid,
+        recipientId,
+        status: 'pending',
+        createdAt: firestore.FieldValue.serverTimestamp(),
+      });
+      
+      console.log('[AddFriend] Friend request sent successfully');
       showToast('Friend request sent successfully! 🎉', 'success');
     } catch (error) {
-      console.error('Error sending friend request:', error);
+      console.error('[AddFriend] Error sending friend request:', error);
       showToast('Could not send friend request. Please try again.', 'error');
     }
   };

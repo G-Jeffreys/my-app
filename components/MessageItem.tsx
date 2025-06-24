@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Image, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { firestore } from '../lib/firebase';
+import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
+import { firestore, timestampToDate } from '../lib/firebase';
 import { useCountdown } from '../hooks/useCountdown';
 import { Message } from '../models/firestore/message';
 import { Receipt } from '../models/firestore/receipt';
@@ -26,28 +26,10 @@ export default function MessageItem({ message }: MessageItemProps) {
 
     console.log('[MessageItem] Setting up receipt listener for message:', message.id);
 
-    if (Platform.OS === 'web') {
-      // For web, use mock receipt data
-      console.log('[MessageItem] Using mock receipt for web');
-      const mockReceipt: Receipt = {
-        userId: user.uid,
-        receivedAt: { seconds: Date.now() / 1000, nanoseconds: 0 } as any,
-        viewedAt: null
-      };
-      setReceipt(mockReceipt);
-      
-      // Mock sender data
-      setSender({
-        displayName: 'Mock User',
-        email: 'mock@example.com'
-      });
-      return;
-    }
-
-    // For mobile, use actual Firestore
     try {
+      // Use unified Firebase API
       const receiptRef = firestore.collection('messages').doc(message.id).collection('receipts').doc(user.uid);
-      const unsub = receiptRef.onSnapshot((snap: any) => {
+      const unsub = receiptRef.onSnapshot((snap) => {
         console.log('[MessageItem] Receipt snapshot received');
         if (snap.exists()) {
           const receiptData = snap.data() as Receipt;
@@ -60,8 +42,9 @@ export default function MessageItem({ message }: MessageItemProps) {
         }
       });
 
+      // Get sender data
       const senderRef = firestore.collection('users').doc(message.senderId);
-      senderRef.get().then((snap: any) => {
+      senderRef.get().then((snap) => {
         console.log('[MessageItem] Sender data received');
         if (snap.exists()) {
           setSender(snap.data());
@@ -77,11 +60,7 @@ export default function MessageItem({ message }: MessageItemProps) {
     }
   }, [message.id, message.senderId, user]);
 
-  const receivedAt = receipt?.receivedAt ? 
-    (Platform.OS === 'web' ? 
-      new Date((receipt.receivedAt as any).seconds * 1000) : 
-      (receipt.receivedAt as any).toDate()
-    ) : null;
+  const receivedAt = receipt?.receivedAt ? timestampToDate(receipt.receivedAt) : null;
   const { remaining, isExpired } = useCountdown(receivedAt, message.ttlPreset);
   
   const isOpened = receipt?.viewedAt;
@@ -102,18 +81,12 @@ export default function MessageItem({ message }: MessageItemProps) {
     
     console.log('[MessageItem] Opening message:', message.id);
 
-    if (Platform.OS === 'web') {
-      // For web, just simulate opening
-      console.log('[MessageItem] Mock opening message for web');
-      setReceipt(prev => prev ? { ...prev, viewedAt: { seconds: Date.now() / 1000, nanoseconds: 0 } as any } : null);
-    } else {
-      // For mobile, use actual Firestore
-      try {
-        const receiptRef = firestore.collection('messages').doc(message.id).collection('receipts').doc(user.uid);
-        receiptRef.set({ viewedAt: firestore.FieldValue.serverTimestamp() }, { merge: true });
-      } catch (error) {
-        console.error('[MessageItem] Error updating receipt:', error);
-      }
+    try {
+      // Use unified Firebase API
+      const receiptRef = firestore.collection('messages').doc(message.id).collection('receipts').doc(user.uid);
+      receiptRef.set({ viewedAt: firestore.FieldValue.serverTimestamp() }, { merge: true });
+    } catch (error) {
+      console.error('[MessageItem] Error updating receipt:', error);
     }
 
     logEvent(ANALYTICS_EVENTS.MEDIA_OPENED, {
@@ -140,16 +113,8 @@ export default function MessageItem({ message }: MessageItemProps) {
   return (
     <TouchableOpacity style={styles.container} onPress={handleOpenMessage}>
       <View style={styles.thumbnail}>
-        {/* We can use an icon based on mediaType */}
-        {Platform.OS === 'web' ? (
-          <View style={styles.mockMedia}>
-            <Text style={styles.mockMediaText}>
-              {message.mediaType === 'image' ? '📷' : '🎥'}
-            </Text>
-          </View>
-        ) : (
-          <Image source={{ uri: message.mediaURL || undefined }} style={styles.image} />
-        )}
+        {/* Display media based on type - simplified for unified API */}
+        <Image source={{ uri: message.mediaURL || undefined }} style={styles.image} />
         {isOpened ? (
           <Text>Opened</Text>
         ) : (
@@ -185,19 +150,12 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 25,
   },
-  mockMedia: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 25,
-    backgroundColor: '#f0f0f0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  mockMediaText: {
-    fontSize: 20,
-  },
   timerOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -209,9 +167,10 @@ const styles = StyleSheet.create({
   },
   senderName: {
     fontSize: 16,
+    fontWeight: 'bold',
   },
   missedText: {
     fontSize: 16,
-    color: 'gray',
+    color: '#999',
   },
 }); 

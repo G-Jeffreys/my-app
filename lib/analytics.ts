@@ -1,4 +1,28 @@
-import analytics from '@react-native-firebase/analytics';
+import { Platform } from 'react-native';
+
+// Platform-agnostic analytics service
+let analytics: any;
+
+if (Platform.OS === 'web') {
+  console.log('[Analytics] Using mock analytics for web development');
+  
+  // Mock analytics for web
+  analytics = () => ({
+    logEvent: async (eventName: string, params?: { [key: string]: any }) => {
+      console.log(`[Analytics Mock] Event logged: ${eventName}`, params);
+    },
+    setUserId: async (userId: string | null) => {
+      console.log(`[Analytics Mock] User ID set: ${userId}`);
+    },
+    setUserProperties: async (properties: { [key: string]: any } | null) => {
+      console.log('[Analytics Mock] User properties set:', properties);
+    }
+  });
+} else {
+  // Real React Native Firebase Analytics
+  analytics = require('@react-native-firebase/analytics').default;
+  console.log('[Analytics] Using React Native Firebase Analytics');
+}
 
 export const logEvent = async (eventName: string, params?: { [key: string]: any }) => {
   try {

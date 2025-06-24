@@ -1,12 +1,12 @@
 import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../store/useAuth';
-import { getFirestore, collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import firestore from '@react-native-firebase/firestore';
 import { Friend } from '../../models/firestore/friend';
 import { router, useLocalSearchParams } from 'expo-router';
 import { User } from '../../models/firestore/user';
 
-export default function SelectFriendScreen() {
+const SelectFriendScreen = () => {
   const { user } = useAuth();
   const [friends, setFriends] = useState<User[]>([]);
   const params = useLocalSearchParams();
@@ -14,14 +14,13 @@ export default function SelectFriendScreen() {
   useEffect(() => {
     const fetchFriends = async () => {
       if (!user) return;
-      const db = getFirestore();
-      const friendsCollectionRef = collection(db, 'users', user.uid, 'friends');
-      const friendsSnapshot = await getDocs(friendsCollectionRef);
+      const friendsCollectionRef = firestore().collection('users').doc(user.uid).collection('friends');
+      const friendsSnapshot = await friendsCollectionRef.get();
       
       const friendPromises = friendsSnapshot.docs.map(async (friendDoc) => {
         const friendData = friendDoc.data() as Friend;
-        const userDocRef = doc(db, 'users', friendData.friendId);
-        const userSnapshot = await getDoc(userDocRef);
+        const userDocRef = firestore().collection('users').doc(friendData.friendId);
+        const userSnapshot = await userDocRef.get();
 
         if (userSnapshot.exists()) {
           return { id: userSnapshot.id, ...userSnapshot.data() } as User;
@@ -54,7 +53,7 @@ export default function SelectFriendScreen() {
       />
     </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -69,4 +68,6 @@ const styles = StyleSheet.create({
   friendName: {
     fontSize: 18,
   },
-}); 
+});
+
+export default SelectFriendScreen; 

@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Alert, Platform } from 'react-native';
 import { useAuth } from '../../store/useAuth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { firestore } from '../../lib/firebase';
+import { ANALYTICS_EVENTS, logEvent } from '../../lib/analytics';
+import Header from '../../components/Header';
 
 const TTL_PRESETS = ['30s', '1m', '5m', '1h', '6h', '24h'];
 
-export default function SettingsScreen() {
+const SettingsScreen = () => {
   const { user } = useAuth();
   const [defaultTtl, setDefaultTtl] = useState('1h');
   const [loading, setLoading] = useState(false);
@@ -14,10 +15,18 @@ export default function SettingsScreen() {
   useEffect(() => {
     const fetchUserSettings = async () => {
       if (!user) return;
-      const userRef = doc(db, 'users', user.uid);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists() && userSnap.data().defaultTtl) {
-        setDefaultTtl(userSnap.data().defaultTtl);
+      
+      if (Platform.OS === 'web') {
+        // Web mock - use default 1h
+        setDefaultTtl('1h');
+        return;
+      }
+      
+      // Mobile Firebase
+      const userRef = (firestore as any)().collection('users').doc(user.uid);
+      const userSnap = await userRef.get();
+      if (userSnap.exists() && userSnap.data()?.defaultTtl) {
+        setDefaultTtl(userSnap.data()!.defaultTtl);
       }
     };
     fetchUserSettings();
@@ -27,9 +36,15 @@ export default function SettingsScreen() {
     if (!user) return;
     setLoading(true);
     try {
-      const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, { defaultTtl });
-      Alert.alert('Success', 'Default TTL saved!');
+      if (Platform.OS === 'web') {
+        // Web mock
+        Alert.alert('Mock Action', `Default TTL would be set to ${defaultTtl}`);
+      } else {
+        // Mobile Firebase
+        const userRef = (firestore as any)().collection('users').doc(user.uid);
+        await userRef.update({ defaultTtl });
+        Alert.alert('Success', 'Default TTL saved!');
+      }
     } catch (error) {
       console.error('Error saving settings:', error);
       Alert.alert('Error', 'Could not save settings.');
@@ -39,26 +54,32 @@ export default function SettingsScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Settings</Text>
+    <View className="flex-1 bg-white">
+      <Header title="Settings" showBackButton={true} />
+      
+      <View style={styles.container}>
       <Text style={styles.label}>Default Snap TTL</Text>
       <View style={styles.ttlContainer}>
         {TTL_PRESETS.map((ttl) => (
           <TouchableOpacity
             key={ttl}
             style={[styles.ttlButton, defaultTtl === ttl && styles.ttlButtonSelected]}
-            onPress={() => setDefaultTtl(ttl)}
+            onPress={() => {
+              setDefaultTtl(ttl);
+              logEvent(ANALYTICS_EVENTS.TTL_SELECTED, { ttl, screen: 'settings' });
+            }}
           >
             <Text style={styles.ttlButtonText}>{ttl}</Text>
           </TouchableOpacity>
         ))}
       </View>
-      <TouchableOpacity onPress={handleSave} disabled={loading} style={styles.saveButton}>
-        <Text style={styles.saveButtonText}>{loading ? 'Saving...' : 'Save'}</Text>
-      </TouchableOpacity>
+        <TouchableOpacity onPress={handleSave} disabled={loading} style={styles.saveButton}>
+          <Text style={styles.saveButtonText}>{loading ? 'Saving...' : 'Save'}</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -104,4 +125,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 16,
   },
-}); 
+});
+
+export default SettingsScreen; 

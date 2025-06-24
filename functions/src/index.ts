@@ -8,10 +8,11 @@
  */
 
 import {setGlobalOptions} from "firebase-functions";
-import {onRequest} from "firebase-functions/https";
+import {onRequest} from "firebase-functions/v1/https";
 import * as logger from "firebase-functions/logger";
-import { onDocumentUpdated } from "firebase-functions/v2/firestore";
+import {onDocumentUpdated} from "firebase-functions/v2/firestore";
 import * as admin from "firebase-admin";
+import {onSchedule} from "firebase-functions/v2/scheduler";
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
@@ -26,7 +27,7 @@ import * as admin from "firebase-admin";
 // functions should each use functions.runWith({ maxInstances: 10 }) instead.
 // In the v1 API, each function can only serve one request per container, so
 // this will be the maximum concurrent request count.
-setGlobalOptions({ maxInstances: 10 });
+setGlobalOptions({maxInstances: 10});
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -36,7 +37,7 @@ export const acceptFriendRequest = onDocumentUpdated(
   async (event) => {
     if (!event.data || !event.data.before || !event.data.after) {
       logger.info("Event data is missing, exiting function.");
-      return null;
+      return;
     }
     const before = event.data.before.data();
     const after = event.data.after.data();
@@ -45,16 +46,16 @@ export const acceptFriendRequest = onDocumentUpdated(
       logger.info(
         `Request ${event.params.requestId} not changed to accepted.`
       );
-      return null;
+      return;
     }
 
     logger.info(`Processing request: ${event.params.requestId}`);
 
-    const { senderId, recipientId } = after;
+    const {senderId, recipientId} = after;
 
     if (!senderId || !recipientId) {
-      logger.error("Sender or Recipient ID missing.", { senderId, recipientId });
-      return null;
+      logger.error("Sender or Recipient ID missing.", {senderId, recipientId});
+      return;
     }
 
     const batch = db.batch();
@@ -74,23 +75,88 @@ export const acceptFriendRequest = onDocumentUpdated(
       friendId: senderId,
       friendedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    
+
     batch.delete(event.data.after.ref);
 
     try {
       await batch.commit();
       logger.info(
         `Created friendship between ${senderId} and ${recipientId}.`
-        );
-      return { success: true };
+      );
     } catch (error) {
       logger.error("Batch commit failed for friend request.", {
         requestId: event.params.requestId,
         error,
       });
-      return { success: false };
     }
   });
+
+export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
+  logger.info("Running cleanup for expired messages.");
+
+  const now = admin.firestore.Timestamp.now();
+  const messagesRef = db.collection("messages");
+  const snapshot = await messagesRef.get();
+
+  if (snapshot.empty) {
+    logger.info("No messages to process.");
+    return;
+  }
+
+  const batch = db.batch();
+  const storage = admin.storage();
+
+  const ttlToMillis = (ttl: string): number => {
+    const unit = ttl.slice(-1);
+    const value = parseInt(ttl.slice(0, -1), 10);
+
+    switch (unit) {
+    case "s":
+      return value * 1000;
+    case "m":
+      return value * 60 * 1000;
+    case "h":
+      return value * 3600 * 1000;
+    default:
+      return 0;
+    }
+  };
+
+  snapshot.forEach((doc) => {
+    const message = doc.data();
+    const sentAt = message.sentAt as admin.firestore.Timestamp;
+    const ttlMillis = ttlToMillis(message.ttlPreset);
+
+    if (sentAt.toMillis() + ttlMillis < now.toMillis()) {
+      logger.info(`Deleting message ${doc.id} and associated media.`);
+
+      if (message.mediaURL) {
+        try {
+          const fileUrl = new URL(message.mediaURL);
+          const filePath = decodeURIComponent(
+            fileUrl.pathname.split("/").slice(3).join("/")
+          );
+          storage.bucket().file(filePath).delete().catch((err) =>
+            logger.error(`Failed to delete media for ${doc.id}`, err)
+          );
+        } catch (e) {
+          logger.error(
+            `Invalid mediaURL for message ${doc.id}: ${message.mediaURL}`,
+            e
+          );
+        }
+      }
+      batch.delete(doc.ref);
+    }
+  });
+
+  try {
+    await batch.commit();
+    logger.info("Expired messages cleanup finished successfully.");
+  } catch (error) {
+    logger.error("Batch commit failed during cleanup.", {error});
+  }
+});
 
 // export const helloWorld = onRequest((request, response) => {
 //   logger.info("Hello logs!", {structuredData: true});

@@ -1,26 +1,32 @@
 import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import React, { useState, useEffect } from 'react';
 import { useLocalSearchParams, router } from 'expo-router';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { getFirestore, collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { firestore, storage } from '../../lib/firebase';
 import { useAuth } from '../../store/useAuth';
-import Video from 'react-native-video';
-import { db } from '../../config/firebase';
+import { ANALYTICS_EVENTS, logEvent } from '../../lib/analytics';
+import { Platform } from 'react-native';
+import Header from '../../components/Header';
 
 const TTL_PRESETS = ['30s', '1m', '5m', '1h', '6h', '24h'];
 
-export default function PreviewScreen() {
-  const { uri, mediaType, recipientId, recipientName } = useLocalSearchParams<{ uri: string; mediaType: 'photo' | 'video', recipientId?: string, recipientName?: string }>();
+const PreviewScreen = () => {
+  const { uri, mediaType, recipientId, recipientName, readonly } = useLocalSearchParams<{ uri: string; mediaType: 'photo' | 'video', recipientId?: string, recipientName?: string, readonly?: string }>();
   const { user } = useAuth();
   const [selectedTtl, setSelectedTtl] = useState('1h');
 
   useEffect(() => {
     const fetchDefaultTtl = async () => {
       if (!user) return;
-      const userRef = doc(db, 'users', user.uid);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists() && userSnap.data().defaultTtl) {
-        setSelectedTtl(userSnap.data().defaultTtl);
+      
+      if (Platform.OS === 'web') {
+        // Mock default TTL for web
+        setSelectedTtl('1h');
+      } else {
+        const userRef = firestore.collection('users').doc(user.uid);
+        const userSnap = await userRef.get();
+        if (userSnap.exists() && userSnap.data()?.defaultTtl) {
+          setSelectedTtl(userSnap.data()!.defaultTtl);
+        }
       }
     };
     fetchDefaultTtl();
@@ -31,27 +37,46 @@ export default function PreviewScreen() {
 
     try {
       console.log(`Uploading ${mediaType}...`);
-      const response = await fetch(uri);
-      const blob = await response.blob();
-
-      const storage = getStorage();
-      const storageRef = ref(storage, `media/${user.uid}/${Date.now()}`);
       
-      await uploadBytes(storageRef, blob);
-      const downloadURL = await getDownloadURL(storageRef);
-      console.log(`${mediaType} uploaded:`, downloadURL);
+      let downloadURL: string;
+      
+      if (Platform.OS === 'web') {
+        // Mock upload for web
+        console.log('[Preview] Mock upload for web');
+        downloadURL = `mock://uploaded-${mediaType}-${Date.now()}`;
+      } else {
+        // Actual upload for mobile
+        const response = await fetch(uri);
+        const blob = await response.blob();
 
-      const db = getFirestore();
-      await addDoc(collection(db, 'messages'), {
-        senderId: user.uid,
-        recipientId: recipientId,
-        mediaURL: downloadURL,
-        mediaType: mediaType,
-        ttlPreset: selectedTtl,
-        sentAt: serverTimestamp(),
+        const storageRef = storage.ref(`media/${user.uid}/${Date.now()}`);
+        
+        await storageRef.put(blob);
+        downloadURL = await storageRef.getDownloadURL();
+        console.log(`${mediaType} uploaded:`, downloadURL);
+      }
+
+      if (Platform.OS === 'web') {
+        // Mock Firestore operation for web
+        console.log('[Preview] Mock message document created');
+      } else {
+        await firestore.collection('messages').add({
+          senderId: user.uid,
+          recipientId: recipientId,
+          mediaURL: downloadURL,
+          mediaType: mediaType,
+          ttlPreset: selectedTtl,
+          sentAt: firestore.FieldValue.serverTimestamp(),
+        });
+        console.log('Message document created.');
+      }
+      
+      await logEvent(ANALYTICS_EVENTS.MEDIA_SENT, {
+        mediaType,
+        ttl: selectedTtl,
+        recipientId,
       });
 
-      console.log('Message document created.');
       router.replace('/(protected)/home');
     } catch (error) {
       console.error('Error sending message: ', error);
@@ -63,26 +88,79 @@ export default function PreviewScreen() {
     router.push({ pathname: '/(protected)/select-friend', params: { uri, mediaType } });
   };
 
+  const renderMedia = () => {
+    if (Platform.OS === 'web' && uri?.startsWith('mock://')) {
+      // Mock media display for web
+      return (
+        <View style={[styles.image, styles.mockMedia]}>
+          <Text style={styles.mockMediaText}>
+            {mediaType === 'photo' ? '📷' : '🎥'}
+          </Text>
+          <Text style={styles.mockMediaSubtext}>
+            Mock {mediaType === 'photo' ? 'Photo' : 'Video'}
+          </Text>
+          <Text style={styles.mockMediaPath}>
+            {uri}
+          </Text>
+        </View>
+      );
+    }
+
+    if (mediaType === 'photo') {
+      return <Image source={{ uri }} style={styles.image} />;
+    } else {
+      // For video, we'd normally use react-native-video, but let's mock it for web
+      if (Platform.OS === 'web') {
+        return (
+          <View style={[styles.video, styles.mockMedia]}>
+            <Text style={styles.mockMediaText}>🎥</Text>
+            <Text style={styles.mockMediaSubtext}>Mock Video Player</Text>
+          </View>
+        );
+      } else {
+        const Video = require('react-native-video').default;
+        return (
+          <Video
+            source={{ uri }}
+            style={styles.video}
+            resizeMode="contain"
+            repeat={true}
+          />
+        );
+      }
+    }
+  };
+
+  if (readonly === 'true') {
+    return (
+      <View style={styles.fullContainer}>
+        <Header title="View Message" showBackButton={true} />
+        <View style={styles.container}>
+          {renderMedia()}
+          <TouchableOpacity style={styles.closeButton} onPress={() => router.back()}>
+            <Text style={styles.closeButtonText}>Close</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   if (!uri) {
     return (
-      <View style={styles.container}>
-        <Text>No image to display.</Text>
+      <View style={styles.fullContainer}>
+        <Header title="Preview" showBackButton={true} />
+        <View style={styles.container}>
+          <Text>No media to display.</Text>
+        </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      {mediaType === 'photo' ? (
-        <Image source={{ uri }} style={styles.image} />
-      ) : (
-        <Video
-          source={{ uri }}
-          style={styles.video}
-          resizeMode="contain"
-          repeat={true}
-        />
-      )}
+    <View style={styles.fullContainer}>
+      <Header title="Send Message" showBackButton={true} />
+      <View style={styles.container}>
+      {renderMedia()}
       
       <View style={styles.bottomContainer}>
         <View style={styles.ttlContainer}>
@@ -90,7 +168,10 @@ export default function PreviewScreen() {
             <TouchableOpacity
               key={ttl}
               style={[styles.ttlButton, selectedTtl === ttl && styles.ttlButtonSelected]}
-              onPress={() => setSelectedTtl(ttl)}
+              onPress={() => {
+                setSelectedTtl(ttl);
+                logEvent(ANALYTICS_EVENTS.TTL_SELECTED, { ttl, screen: 'preview' });
+              }}
             >
               <Text style={styles.ttlButtonText}>{ttl}</Text>
             </TouchableOpacity>
@@ -102,16 +183,21 @@ export default function PreviewScreen() {
             <Text style={styles.selectFriendButtonText}>{recipientName ? `To: ${recipientName}` : 'Select Friend'}</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.sendButton, !recipientId && styles.sendButtonDisabled]} onPress={handleSend} disabled={!recipientId}>
+          <TouchableOpacity style={[styles.sendButton, !recipientId && styles.sendButtonDisabled]} onPress={handleSend} disabled={!recipientId || readonly === 'true'}>
             <Text style={styles.sendButtonText}>Send</Text>
           </TouchableOpacity>
         </View>
       </View>
     </View>
+    </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
+  fullContainer: {
+    flex: 1,
+    backgroundColor: 'white',
+  },
   container: {
     flex: 1,
     backgroundColor: 'black',
@@ -121,6 +207,25 @@ const styles = StyleSheet.create({
   },
   video: {
     flex: 1,
+  },
+  mockMedia: {
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mockMediaText: {
+    fontSize: 48,
+    marginBottom: 10,
+  },
+  mockMediaSubtext: {
+    fontSize: 18,
+    color: '#666',
+    marginBottom: 10,
+  },
+  mockMediaPath: {
+    fontSize: 12,
+    color: '#999',
+    fontFamily: 'monospace',
   },
   bottomContainer: {
     position: 'absolute',
@@ -175,4 +280,18 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: 'bold',
   },
-}); 
+  closeButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 10,
+    borderRadius: 20,
+  },
+  closeButtonText: {
+    color: 'white',
+    fontSize: 16,
+  },
+});
+
+export default PreviewScreen; 

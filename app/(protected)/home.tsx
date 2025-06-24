@@ -1,12 +1,15 @@
-import { View, Text, TouchableOpacity } from "react-native";
+import { View, Text, TouchableOpacity, FlatList } from "react-native";
 import { useAuth } from "../../store/useAuth";
 import { Link } from "expo-router";
-import { useEffect } from "react";
-import { collection, query, where, onSnapshot, doc, setDoc, serverTimestamp, getDoc } from "firebase/firestore";
+import { useEffect, useState } from "react";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../../config/firebase";
+import { Message } from "../../models/firestore/message";
+import MessageItem from "../../components/MessageItem";
 
 export default function Home() {
   const { signOut, user } = useAuth();
+  const [messages, setMessages] = useState<Message[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -14,51 +17,42 @@ export default function Home() {
     const q = query(collection(db, "messages"), where("recipientId", "==", user.uid));
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      snapshot.docChanges().forEach(async (change) => {
-        if (change.type === "added") {
-          const message = change.doc.data();
-          const messageId = change.doc.id;
-          
-          console.log("New message received: ", messageId);
-
-          const receiptRef = doc(db, "messages", messageId, "receipts", user.uid);
-          
-          const receiptSnap = await getDoc(receiptRef);
-
-          if (!receiptSnap.exists()) {
-            await setDoc(receiptRef, {
-              userId: user.uid,
-              receivedAt: serverTimestamp(),
-              viewedAt: null,
-            });
-            console.log("Receipt created for message: ", messageId);
-          }
-        }
-      });
+      const newMessages: Message[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+      setMessages(newMessages);
     });
 
     return () => unsubscribe();
   }, [user]);
 
   return (
-    <View className="flex-1 items-center justify-center bg-white">
-      <Text className="text-2xl font-bold mb-2">Welcome 👋</Text>
-      <Text className="text-lg text-gray-600 mb-8">{user?.displayName || user?.email}</Text>
-
-      <Link href="/(protected)/friends" asChild>
-        <TouchableOpacity className="bg-blue-500 px-6 py-3 rounded-lg mb-4">
-          <Text className="text-white text-lg font-semibold">Friends</Text>
-        </TouchableOpacity>
-      </Link>
-
-      <Link href="/(protected)/camera" asChild>
-        <TouchableOpacity className="bg-green-500 px-6 py-3 rounded-lg mb-4">
-          <Text className="text-white text-lg font-semibold">Camera</Text>
-        </TouchableOpacity>
-      </Link>
+    <View className="flex-1 bg-white">
+      <View className="flex-row justify-around items-center p-4 border-b border-gray-200">
+        <Link href="/(protected)/friends" asChild>
+          <TouchableOpacity>
+            <Text className="text-blue-500 text-lg">Friends</Text>
+          </TouchableOpacity>
+        </Link>
+        <Link href="/(protected)/camera" asChild>
+          <TouchableOpacity>
+            <Text className="text-green-500 text-lg">Camera</Text>
+          </TouchableOpacity>
+        </Link>
+      </View>
       
-      <TouchableOpacity onPress={signOut} className="mt-6 bg-red-500 px-4 py-2 rounded-lg">
-        <Text className="text-white">Logout</Text>
+      <FlatList
+        data={messages}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => <MessageItem message={item} />}
+        ListHeaderComponent={() => (
+          <View className="p-4 items-center">
+            <Text className="text-2xl font-bold mb-2">Welcome 👋</Text>
+            <Text className="text-lg text-gray-600 mb-8">{user?.displayName || user?.email}</Text>
+          </View>
+        )}
+      />
+
+      <TouchableOpacity onPress={signOut} className="m-4 bg-red-500 p-3 rounded-lg items-center">
+        <Text className="text-white font-bold">Logout</Text>
       </TouchableOpacity>
     </View>
   );

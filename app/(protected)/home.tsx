@@ -37,6 +37,11 @@ export default function Home() {
             <Text className="text-green-500 text-lg">Camera</Text>
           </TouchableOpacity>
         </Link>
+        <Link href="/(protected)/settings" asChild>
+          <TouchableOpacity>
+            <Text className="text-gray-500 text-lg">Settings</Text>
+          </TouchableOpacity>
+        </Link>
       </View>
       
       <FlatList

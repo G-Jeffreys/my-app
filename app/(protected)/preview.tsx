@@ -1,10 +1,11 @@
 import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLocalSearchParams, router } from 'expo-router';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { getFirestore, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../../store/useAuth';
 import Video from 'react-native-video';
+import { db } from '../../config/firebase';
 
 const TTL_PRESETS = ['30s', '1m', '5m', '1h', '6h', '24h'];
 
@@ -12,6 +13,18 @@ export default function PreviewScreen() {
   const { uri, mediaType, recipientId, recipientName } = useLocalSearchParams<{ uri: string; mediaType: 'photo' | 'video', recipientId?: string, recipientName?: string }>();
   const { user } = useAuth();
   const [selectedTtl, setSelectedTtl] = useState('1h');
+
+  useEffect(() => {
+    const fetchDefaultTtl = async () => {
+      if (!user) return;
+      const userRef = doc(db, 'users', user.uid);
+      const userSnap = await getDoc(userRef);
+      if (userSnap.exists() && userSnap.data().defaultTtl) {
+        setSelectedTtl(userSnap.data().defaultTtl);
+      }
+    };
+    fetchDefaultTtl();
+  }, [user]);
 
   const handleSend = async () => {
     if (!uri || !user || !mediaType || !recipientId) return;

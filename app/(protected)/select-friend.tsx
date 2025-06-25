@@ -97,9 +97,11 @@ export default function SelectFriendScreen() {
       await addDoc(collection(firestore, "messages"), {
         senderId: auth.currentUser.uid,
         recipientId: friend.id,
-        mediaUrl: downloadURL,
+        mediaURL: downloadURL,
         mediaType: type,
-        createdAt: serverTimestamp(),
+        sentAt: serverTimestamp(),
+        ttlPreset: '24h',
+        text: null,
         viewed: false,
       });
 

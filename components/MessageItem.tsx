@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useRef } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native";
-import { Video, ResizeMode } from "expo-av";
+import { ResizeMode } from "expo-av";
 import { useAuth } from "../store/useAuth";
 import { useCountdown } from "../hooks/useCountdown";
 import { Message, FirestoreTimestamp } from "../models/firestore/message";
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { firestore } from "../lib/firebase";
+import PlatformVideo from "./PlatformVideo";
 
 interface MessageItemProps {
   message: Message;
@@ -23,7 +24,7 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
   const user = useAuth((state) => state.user);
   const [isOpened, setIsOpened] = useState(false);
   const [isViewed, setIsViewed] = useState(false);
-  const videoRef = useRef<Video>(null);
+  const videoRef = useRef<any>(null);
 
   const sentAtDate = message.sentAt ? toDate(message.sentAt) : null;
   const { remaining, isExpired } = useCountdown(sentAtDate, message.ttlPreset);
@@ -71,7 +72,7 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
           {message.mediaType === "image" || message.mediaType === 'photo' ? (
             <Image source={{ uri: message.mediaURL || "" }} style={styles.media} />
           ) : message.mediaType === 'video' ? (
-            <Video
+            <PlatformVideo
               ref={videoRef}
               source={{ uri: message.mediaURL || "" }}
               style={styles.media}

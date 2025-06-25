@@ -17,8 +17,10 @@ import {
   addDoc,
   serverTimestamp,
 } from "firebase/firestore";
+import { Auth } from "firebase/auth";
 import { firestore, storage, auth } from "../../lib/firebase";
 import Header from "../../components/Header";
+import PlatformVideo from "../../components/PlatformVideo";
 
 export default function PreviewScreen() {
   const router = useRouter();
@@ -53,9 +55,11 @@ export default function PreviewScreen() {
       await addDoc(collection(firestore, "messages"), {
         senderId: auth.currentUser.uid,
         recipientId: recipientId, // This needs to be updated for group chat later
-        mediaUrl: downloadURL,
+        mediaURL: downloadURL,
         mediaType: type,
-        createdAt: serverTimestamp(),
+        sentAt: serverTimestamp(),
+        ttlPreset: '24h',
+        text: null,
         viewed: false,
       });
 
@@ -81,12 +85,13 @@ export default function PreviewScreen() {
       {type === "image" ? (
         <Image source={{ uri }} style={styles.media} resizeMode="contain" />
       ) : (
-        <Video
+        <PlatformVideo
           source={{ uri }}
           style={styles.media}
           useNativeControls
           resizeMode={ResizeMode.CONTAIN}
           isLooping
+          shouldPlay
         />
       )}
 

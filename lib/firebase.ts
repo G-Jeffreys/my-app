@@ -2,6 +2,7 @@ import { initializeApp, getApp, getApps } from "firebase/app";
 import {
   getAuth,
   initializeAuth,
+  Auth,
 } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
@@ -31,7 +32,7 @@ const app =
   getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 // Initialize Auth with proper cross-platform compatibility
-let auth;
+let auth: Auth;
 try {
   // For Expo/React Native, use initializeAuth for better persistence handling
   // For web, getAuth is sufficient and more reliable

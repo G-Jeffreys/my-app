@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SnapConnect Video Recording Test - Debug Console</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #000;
+            color: #fff;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .camera-container {
+            position: relative;
+            width: 100%;
+            height: 400px;
+            background: #1a1a1a;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        
+        #videoElement {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 15px;
+        }
+        
+        .controls-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+        }
+        
+        .control-button {
+            background: rgba(0, 0, 0, 0.5);
+            border: none;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 20px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .control-button:hover {
+            background: rgba(0, 0, 0, 0.7);
+            transform: scale(1.05);
+        }
+        
+        .photo-button {
+            background: rgba(255, 255, 255, 0.9);
+            color: #000;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .record-button {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.9);
+            border: 4px solid #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+            font-weight: 600;
+            color: #000;
+        }
+        
+        .record-button.recording {
+            background: rgba(220, 38, 38, 0.9);
+            color: white;
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        
+        .recording-indicator {
+            position: absolute;
+            top: 80px;
+            left: 20px;
+            display: none;
+            align-items: center;
+            background: rgba(220, 38, 38, 0.9);
+            padding: 8px 12px;
+            border-radius: 16px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .recording-indicator.active {
+            display: flex;
+        }
+        
+        .recording-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: white;
+            margin-right: 8px;
+            animation: blink 1s infinite;
+        }
+        
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+        
+        .status-panel {
+            background: rgba(30, 30, 30, 0.9);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .status-item {
+            background: rgba(50, 50, 50, 0.5);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #007AFF;
+        }
+        
+        .status-label {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .status-value {
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+        }
+        
+        .log-container {
+            background: rgba(30, 30, 30, 0.9);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .log-header {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #007AFF;
+        }
+        
+        .log-entry {
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 4px;
+            background: rgba(50, 50, 50, 0.3);
+            border-left: 3px solid;
+        }
+        
+        .log-info { border-left-color: #007AFF; }
+        .log-success { border-left-color: #34C759; }
+        .log-warning { border-left-color: #FF9500; }
+        .log-error { border-left-color: #FF3B30; }
+        
+        .media-preview {
+            background: rgba(30, 30, 30, 0.9);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .preview-video {
+            width: 100%;
+            max-height: 300px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+        
+        .action-button {
+            background: #007AFF;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .action-button:hover {
+            background: #0051D5;
+            transform: translateY(-1px);
+        }
+        
+        .action-button.secondary {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .action-button.secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .hidden-canvas {
+            display: none;
+        }
+        
+        .error-state {
+            background: rgba(255, 59, 48, 0.1);
+            border: 1px solid #FF3B30;
+            color: #FF3B30;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .browser-info {
+            background: rgba(50, 50, 50, 0.5);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🎥 SnapConnect Video Recording Test</h1>
+            <p>Browser MCP Debug Console - Platform: Web</p>
+        </div>
+        
+        <!-- Browser Info -->
+        <div class="browser-info">
+            <div><strong>User Agent:</strong> <span id="userAgent"></span></div>
+            <div><strong>MediaRecorder Support:</strong> <span id="mediaRecorderSupport"></span></div>
+            <div><strong>WebRTC Support:</strong> <span id="webrtcSupport"></span></div>
+        </div>
+        
+        <!-- Camera Container -->
+        <div class="camera-container">
+            <video id="videoElement" autoplay playsinline muted></video>
+            <canvas id="hiddenCanvas" class="hidden-canvas"></canvas>
+            
+            <!-- Recording Indicator -->
+            <div id="recordingIndicator" class="recording-indicator">
+                <div class="recording-dot"></div>
+                <span id="recordingText">Recording... 10s left</span>
+            </div>
+            
+            <!-- Controls -->
+            <div class="controls-bar">
+                <button class="control-button" id="flipButton">🔄 Flip</button>
+                <button class="photo-button" id="photoButton">📷</button>
+                <button class="record-button" id="recordButton">🔴 Record</button>
+            </div>
+        </div>
+        
+        <!-- Status Panel -->
+        <div class="status-panel">
+            <h3>System Status</h3>
+            <div class="status-grid">
+                <div class="status-item">
+                    <div class="status-label">Permission Status</div>
+                    <div class="status-value" id="permissionStatus">Checking...</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Camera Facing</div>
+                    <div class="status-value" id="cameraFacing">back</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Recording State</div>
+                    <div class="status-value" id="recordingState">Idle</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Stream Active</div>
+                    <div class="status-value" id="streamStatus">No</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Timer</div>
+                    <div class="status-value" id="timerDisplay">--</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Last Action</div>
+                    <div class="status-value" id="lastAction">None</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Action Buttons -->
+        <div class="action-buttons">
+            <button class="action-button" id="startCameraButton">Start Camera</button>
+            <button class="action-button secondary" id="stopCameraButton" disabled>Stop Camera</button>
+            <button class="action-button secondary" id="clearLogsButton">Clear Logs</button>
+            <button class="action-button secondary" id="downloadLogsButton">Download Logs</button>
+        </div>
+        
+        <!-- Console Logs -->
+        <div class="log-container">
+            <div class="log-header">📝 Debug Console (Real-time)</div>
+            <div id="logOutput"></div>
+        </div>
+        
+        <!-- Media Preview -->
+        <div class="media-preview" id="mediaPreview" style="display: none;">
+            <h3>📹 Recorded Media Preview</h3>
+            <video id="previewVideo" class="preview-video" controls></video>
+            <div class="action-buttons">
+                <button class="action-button" id="downloadVideoButton">Download Video</button>
+                <button class="action-button secondary" id="clearPreviewButton">Clear Preview</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables (matching React component state)
+        let webStream = null;
+        let mediaRecorderRef = null;
+        let recordedChunksRef = [];
+        let recordingTimerRef = null;
+        let facing = 'back'; // 'front' | 'back'
+        let isRecording = false;
+        let recordingTimeLeft = 10;
+        let permissionStatus = 'checking'; // 'checking' | 'granted' | 'denied' | 'requesting'
+        
+        // DOM elements
+        const videoElement = document.getElementById('videoElement');
+        const hiddenCanvas = document.getElementById('hiddenCanvas');
+        const recordingIndicator = document.getElementById('recordingIndicator');
+        const recordingText = document.getElementById('recordingText');
+        const flipButton = document.getElementById('flipButton');
+        const photoButton = document.getElementById('photoButton');
+        const recordButton = document.getElementById('recordButton');
+        const startCameraButton = document.getElementById('startCameraButton');
+        const stopCameraButton = document.getElementById('stopCameraButton');
+        const clearLogsButton = document.getElementById('clearLogsButton');
+        const downloadLogsButton = document.getElementById('downloadLogsButton');
+        const logOutput = document.getElementById('logOutput');
+        const mediaPreview = document.getElementById('mediaPreview');
+        const previewVideo = document.getElementById('previewVideo');
+        const downloadVideoButton = document.getElementById('downloadVideoButton');
+        const clearPreviewButton = document.getElementById('clearPreviewButton');
+        
+        // Status elements
+        const permissionStatusEl = document.getElementById('permissionStatus');
+        const cameraFacingEl = document.getElementById('cameraFacing');
+        const recordingStateEl = document.getElementById('recordingState');
+        const streamStatusEl = document.getElementById('streamStatus');
+        const timerDisplayEl = document.getElementById('timerDisplay');
+        const lastActionEl = document.getElementById('lastAction');
+        
+        // Logging function with timestamps and types
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            logOutput.appendChild(logEntry);
+            logOutput.scrollTop = logOutput.scrollHeight;
+            
+            // Also log to browser console for debugging
+            console.log(`[SnapConnect] ${message}`);
+            
+            // Update last action
+            lastActionEl.textContent = message.substring(0, 30) + '...';
+        }
+        
+        // Update status display
+        function updateStatus() {
+            permissionStatusEl.textContent = permissionStatus;
+            cameraFacingEl.textContent = facing;
+            recordingStateEl.textContent = isRecording ? `Recording (${recordingTimeLeft}s)` : 'Idle';
+            streamStatusEl.textContent = webStream ? 'Yes' : 'No';
+            timerDisplayEl.textContent = isRecording ? `${recordingTimeLeft}s` : '--';
+            
+            // Update button states
+            recordButton.textContent = isRecording ? `⏹️ Stop (${recordingTimeLeft}s)` : '🔴 Record';
+            recordButton.className = `record-button ${isRecording ? 'recording' : ''}`;
+            
+            // Update recording indicator
+            if (isRecording) {
+                recordingIndicator.classList.add('active');
+                recordingText.textContent = `Recording... ${recordingTimeLeft}s left`;
+            } else {
+                recordingIndicator.classList.remove('active');
+            }
+            
+            // Enable/disable buttons
+            flipButton.disabled = !webStream || isRecording;
+            photoButton.disabled = !webStream || isRecording;
+            recordButton.disabled = !webStream;
+            stopCameraButton.disabled = !webStream;
+        }
+        
+        // Browser compatibility check
+        function checkBrowserSupport() {
+            log('[BrowserCheck] Checking browser capabilities...', 'info');
+            
+            document.getElementById('userAgent').textContent = navigator.userAgent;
+            
+            // Check MediaRecorder support
+            if (typeof MediaRecorder !== 'undefined') {
+                document.getElementById('mediaRecorderSupport').textContent = 'Yes';
+                log('[BrowserCheck] MediaRecorder API is supported', 'success');
+            } else {
+                document.getElementById('mediaRecorderSupport').textContent = 'No';
+                log('[BrowserCheck] MediaRecorder API is NOT supported', 'error');
+            }
+            
+            // Check WebRTC support
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                document.getElementById('webrtcSupport').textContent = 'Yes';
+                log('[BrowserCheck] WebRTC/getUserMedia is supported', 'success');
+            } else {
+                document.getElementById('webrtcSupport').textContent = 'No';
+                log('[BrowserCheck] WebRTC/getUserMedia is NOT supported', 'error');
+            }
+        }
+        
+        // Web permission handling (matching React component)
+        async function checkWebPermissions() {
+            log('[CameraPermissions] Checking web permissions...', 'info');
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: facing === 'front' ? 'user' : 'environment',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: true
+                });
+                
+                log('[CameraPermissions] Web permissions granted, stream available', 'success');
+                
+                if (videoElement) {
+                    videoElement.srcObject = stream;
+                    webStream = stream;
+                    log('[CameraPermissions] Video element stream set successfully', 'success');
+                }
+                
+                return true;
+            } catch (error) {
+                log(`[CameraPermissions] Web permissions denied: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        // Setup web video stream (matching React component)
+        async function setupWebVideo() {
+            log('[CameraSetup] Setting up web video stream...', 'info');
+            
+            if (!videoElement) {
+                log('[CameraSetup] Video element not available', 'error');
+                return;
+            }
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: facing === 'front' ? 'user' : 'environment',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: true
+                });
+                
+                videoElement.srcObject = stream;
+                webStream = stream;
+                permissionStatus = 'granted';
+                log('[CameraSetup] Web video stream setup complete', 'success');
+                
+                // Log stream details
+                const videoTracks = stream.getVideoTracks();
+                const audioTracks = stream.getAudioTracks();
+                log(`[CameraSetup] Video tracks: ${videoTracks.length}, Audio tracks: ${audioTracks.length}`, 'info');
+                
+                if (videoTracks.length > 0) {
+                    const settings = videoTracks[0].getSettings();
+                    log(`[CameraSetup] Video settings: ${settings.width}x${settings.height}, facing: ${settings.facingMode}`, 'info');
+                }
+                
+            } catch (error) {
+                log(`[CameraSetup] Error setting up web video: ${error.message}`, 'error');
+                permissionStatus = 'denied';
+            }
+            
+            updateStatus();
+        }
+        
+        // Toggle camera facing (matching React component)
+        async function toggleCameraFacing() {
+            log('[CameraControls] Toggling camera facing...', 'info');
+            const newFacing = facing === 'back' ? 'front' : 'back';
+            facing = newFacing;
+            
+            if (webStream) {
+                // Stop current stream
+                webStream.getTracks().forEach(track => {
+                    track.stop();
+                    log(`[CameraControls] Stopped track: ${track.kind}`, 'info');
+                });
+                webStream = null;
+                
+                // Setup new stream with new facing mode
+                setTimeout(() => setupWebVideo(), 100);
+            }
+            
+            updateStatus();
+        }
+        
+        // Start web recording (matching React component)
+        async function startWebRecording() {
+            log('[VideoRecording] Attempting to start web recording...', 'info');
+            
+            if (!webStream) {
+                log('[VideoRecording] Web stream not available', 'error');
+                alert('Recording Error: Camera stream not available. Please refresh and try again.');
+                return;
+            }
+            
+            try {
+                recordedChunksRef = [];
+                
+                log(`[VideoRecording] Starting MediaRecorder with stream: ${webStream.id}`, 'info');
+                
+                const mediaRecorder = new MediaRecorder(webStream, {
+                    mimeType: 'video/webm'
+                });
+                
+                mediaRecorderRef = mediaRecorder;
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    log(`[VideoRecording] Recording data available, size: ${event.data.size}`, 'info');
+                    if (event.data.size > 0) {
+                        recordedChunksRef.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    log(`[VideoRecording] Recording stopped, chunks: ${recordedChunksRef.length}`, 'success');
+                    const blob = new Blob(recordedChunksRef, {
+                        type: 'video/webm'
+                    });
+                    
+                    // Create a blob URL
+                    const url = URL.createObjectURL(blob);
+                    
+                    log(`[VideoRecording] Web recording completed, blob size: ${blob.size}`, 'success');
+                    
+                    // Show preview
+                    showVideoPreview(url, blob);
+                };
+                
+                mediaRecorder.onerror = (event) => {
+                    log(`[VideoRecording] MediaRecorder error: ${event.error}`, 'error');
+                    alert('Recording Error: Failed to record video. Please try again.');
+                    isRecording = false;
+                    updateStatus();
+                };
+                
+                mediaRecorder.start();
+                isRecording = true;
+                recordingTimeLeft = 10;
+                
+                log('[VideoRecording] MediaRecorder started successfully', 'success');
+                
+                // Start countdown timer
+                recordingTimerRef = setInterval(() => {
+                    recordingTimeLeft--;
+                    log(`[VideoRecording] Recording time left: ${recordingTimeLeft}s`, 'info');
+                    updateStatus();
+                    
+                    if (recordingTimeLeft <= 0) {
+                        stopWebRecording();
+                    }
+                }, 1000);
+                
+            } catch (error) {
+                log(`[VideoRecording] Error starting web recording: ${error.message}`, 'error');
+                alert('Recording Error: Failed to start recording. Please try again.');
+                isRecording = false;
+            }
+            
+            updateStatus();
+        }
+        
+        // Stop web recording (matching React component)
+        function stopWebRecording() {
+            log('[VideoRecording] Stopping web recording...', 'info');
+            
+            if (mediaRecorderRef && isRecording) {
+                mediaRecorderRef.stop();
+                isRecording = false;
+                
+                if (recordingTimerRef) {
+                    clearInterval(recordingTimerRef);
+                    recordingTimerRef = null;
+                }
+                
+                log('[VideoRecording] Web recording stopped successfully', 'success');
+            }
+            
+            updateStatus();
+        }
+        
+        // Take web photo (matching React component)
+        async function takeWebPhoto() {
+            log('[PhotoCapture] Taking web photo...', 'info');
+            
+            if (!videoElement || !hiddenCanvas) {
+                log('[PhotoCapture] Video or canvas element not available', 'error');
+                return;
+            }
+            
+            try {
+                const video = videoElement;
+                const canvas = hiddenCanvas;
+                const context = canvas.getContext('2d');
+                
+                if (!context) {
+                    log('[PhotoCapture] Canvas context not available', 'error');
+                    return;
+                }
+                
+                // Set canvas dimensions to match video
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                
+                log(`[PhotoCapture] Canvas dimensions set: ${canvas.width}x${canvas.height}`, 'info');
+                
+                // Draw the current video frame to canvas
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // Convert canvas to data URL
+                const imageSrc = canvas.toDataURL('image/jpeg', 0.8);
+                
+                if (imageSrc) {
+                    log(`[PhotoCapture] Web photo taken, data URL length: ${imageSrc.length}`, 'success');
+                    
+                    // Create download link
+                    const link = document.createElement('a');
+                    link.download = `snapconnect-photo-${Date.now()}.jpg`;
+                    link.href = imageSrc;
+                    link.click();
+                    
+                    log('[PhotoCapture] Photo download initiated', 'success');
+                } else {
+                    log('[PhotoCapture] Failed to capture screenshot', 'error');
+                    alert('Photo Error: Failed to capture photo. Please try again.');
+                }
+            } catch (error) {
+                log(`[PhotoCapture] Error taking web photo: ${error.message}`, 'error');
+                alert('Photo Error: Failed to take photo. Please try again.');
+            }
+        }
+        
+        // Show video preview
+        function showVideoPreview(url, blob) {
+            log('[VideoPreview] Showing video preview...', 'info');
+            
+            previewVideo.src = url;
+            mediaPreview.style.display = 'block';
+            
+            // Store blob for download
+            previewVideo.dataset.blobUrl = url;
+            previewVideo.dataset.blobSize = blob.size;
+            
+            log(`[VideoPreview] Preview ready, blob size: ${blob.size} bytes`, 'success');
+        }
+        
+        // Download recorded video
+        function downloadRecordedVideo() {
+            const url = previewVideo.dataset.blobUrl;
+            if (url) {
+                const link = document.createElement('a');
+                link.download = `snapconnect-video-${Date.now()}.webm`;
+                link.href = url;
+                link.click();
+                
+                log('[VideoDownload] Video download initiated', 'success');
+            }
+        }
+        
+        // Clear video preview
+        function clearVideoPreview() {
+            const url = previewVideo.dataset.blobUrl;
+            if (url) {
+                URL.revokeObjectURL(url);
+            }
+            
+            previewVideo.src = '';
+            mediaPreview.style.display = 'none';
+            
+            log('[VideoPreview] Preview cleared', 'info');
+        }
+        
+        // Stop camera stream
+        function stopCamera() {
+            log('[CameraControls] Stopping camera...', 'info');
+            
+            if (webStream) {
+                webStream.getTracks().forEach(track => {
+                    track.stop();
+                    log(`[CameraControls] Stopped track: ${track.kind}`, 'info');
+                });
+                webStream = null;
+                videoElement.srcObject = null;
+                permissionStatus = 'denied';
+            }
+            
+            if (isRecording) {
+                stopWebRecording();
+            }
+            
+            updateStatus();
+        }
+        
+        // Clear logs
+        function clearLogs() {
+            logOutput.innerHTML = '';
+            log('[System] Logs cleared', 'info');
+        }
+        
+        // Download logs
+        function downloadLogs() {
+            const logs = logOutput.textContent;
+            const blob = new Blob([logs], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            
+            const link = document.createElement('a');
+            link.download = `snapconnect-debug-logs-${Date.now()}.txt`;
+            link.href = url;
+            link.click();
+            
+            URL.revokeObjectURL(url);
+            log('[System] Debug logs downloaded', 'success');
+        }
+        
+        // Event listeners
+        startCameraButton.addEventListener('click', setupWebVideo);
+        stopCameraButton.addEventListener('click', stopCamera);
+        flipButton.addEventListener('click', toggleCameraFacing);
+        photoButton.addEventListener('click', takeWebPhoto);
+        recordButton.addEventListener('click', () => {
+            if (isRecording) {
+                stopWebRecording();
+            } else {
+                startWebRecording();
+            }
+        });
+        clearLogsButton.addEventListener('click', clearLogs);
+        downloadLogsButton.addEventListener('click', downloadLogs);
+        downloadVideoButton.addEventListener('click', downloadRecordedVideo);
+        clearPreviewButton.addEventListener('click', clearVideoPreview);
+        
+        // Initialize
+        function init() {
+            log('[System] SnapConnect Video Recording Test initialized', 'success');
+            log('[System] Platform: Web Browser', 'info');
+            
+            checkBrowserSupport();
+            updateStatus();
+            
+            // Auto-start camera permissions check
+            permissionStatus = 'requesting';
+            updateStatus();
+            
+            log('[System] Ready for testing. Click "Start Camera" to begin.', 'info');
+        }
+        
+        // Start when page loads
+        document.addEventListener('DOMContentLoaded', init);
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (webStream) {
+                webStream.getTracks().forEach(track => track.stop());
+            }
+            if (recordingTimerRef) {
+                clearInterval(recordingTimerRef);
+            }
+        });
+    </script>
+</body>
+</html> 

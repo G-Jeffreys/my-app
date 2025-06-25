@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SnapConnect End-to-End Pipeline Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .pipeline-flow {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .step-card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: all 0.3s ease;
+        }
+        
+        .step-card.active {
+            background: rgba(0, 122, 255, 0.3);
+            border-color: #007AFF;
+            transform: scale(1.02);
+        }
+        
+        .step-card.completed {
+            background: rgba(52, 199, 89, 0.3);
+            border-color: #34C759;
+        }
+        
+        .step-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .step-number {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        .step-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .camera-container {
+            position: relative;
+            width: 100%;
+            height: 300px;
+            background: #000;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+        
+        #videoElement {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .controls {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 25px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+        
+        .btn-primary {
+            background: #007AFF;
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .record-button {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: #ff3b30;
+            border: 3px solid white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .record-button.recording {
+            animation: pulse 1s infinite;
+            background: #ff1744;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+        
+        .preview-video {
+            width: 100%;
+            height: 200px;
+            border-radius: 10px;
+            background: #000;
+            margin: 10px 0;
+        }
+        
+        .message-item {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .message-item:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .message-item.unopened {
+            background: rgba(255, 149, 0, 0.3);
+            border-color: #ff9500;
+        }
+        
+        .timer-overlay {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-weight: bold;
+        }
+        
+        .status-bar {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .status-item {
+            text-align: center;
+        }
+        
+        .status-label {
+            font-size: 12px;
+            opacity: 0.8;
+            margin-bottom: 5px;
+        }
+        
+        .status-value {
+            font-size: 16px;
+            font-weight: bold;
+        }
+        
+        .log-panel {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 30px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            font-family: 'Monaco', monospace;
+            font-size: 12px;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .log-success { color: #34C759; }
+        .log-error { color: #FF3B30; }
+        .log-warning { color: #FF9500; }
+        .log-info { color: #007AFF; }
+        
+        .friend-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .friend-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            margin: 5px 0;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .friend-item:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .friend-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 10px;
+            font-weight: bold;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .recording-indicator {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 59, 48, 0.9);
+            color: white;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            display: none;
+        }
+        
+        .recording-indicator.active {
+            display: block;
+            animation: blink 1s infinite;
+        }
+        
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.7; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🎥 SnapConnect End-to-End Pipeline Test</h1>
+            <p>Complete Video Flow: Record → Preview → Send → Receive → View</p>
+        </div>
+        
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-label">Current Step</div>
+                <div class="status-value" id="currentStep">1. Record</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Pipeline State</div>
+                <div class="status-value" id="pipelineState">Ready</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Recorded Videos</div>
+                <div class="status-value" id="videoCount">0</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Messages Sent</div>
+                <div class="status-value" id="messageCount">0</div>
+            </div>
+        </div>
+        
+        <!-- Pipeline Flow -->
+        <div class="pipeline-flow">
+            <!-- Step 1: Record Video -->
+            <div class="step-card active" id="step1">
+                <div class="step-header">
+                    <div class="step-number">1</div>
+                    <div class="step-title">📹 Record Video</div>
+                </div>
+                
+                <div class="camera-container">
+                    <video id="videoElement" autoplay playsinline muted></video>
+                    <canvas id="hiddenCanvas" style="display: none;"></canvas>
+                    
+                    <div class="recording-indicator" id="recordingIndicator">
+                        🔴 Recording... <span id="recordingTimer">10s</span>
+                    </div>
+                    
+                    <div class="controls">
+                        <button class="btn btn-secondary" id="startCameraBtn">Start Camera</button>
+                        <button class="btn btn-secondary" id="flipCameraBtn" disabled>🔄 Flip</button>
+                        <div class="record-button" id="recordBtn" title="Click to record 10s video">🔴</div>
+                    </div>
+                </div>
+                
+                <div>
+                    <button class="btn btn-primary" id="simulateRecordBtn">🎬 Simulate Recording</button>
+                    <small style="display: block; margin-top: 10px; opacity: 0.8;">
+                        Use "Simulate Recording" if camera permissions are blocked
+                    </small>
+                </div>
+            </div>
+            
+            <!-- Step 2: Preview Video -->
+            <div class="step-card" id="step2">
+                <div class="step-header">
+                    <div class="step-number">2</div>
+                    <div class="step-title">👁️ Preview Video</div>
+                </div>
+                
+                <video id="previewVideo" class="preview-video" controls style="display: none;"></video>
+                <div id="previewPlaceholder" style="background: rgba(255,255,255,0.1); height: 200px; border-radius: 10px; display: flex; align-items: center; justify-content: center; margin: 10px 0;">
+                    <span style="opacity: 0.6;">Record a video to see preview</span>
+                </div>
+                
+                <div style="margin-top: 15px;">
+                    <button class="btn btn-secondary" id="retakeBtn" disabled>🔄 Retake</button>
+                    <button class="btn btn-primary" id="sendToBtn" disabled>📤 Send to...</button>
+                </div>
+            </div>
+            
+            <!-- Step 3: Select Friend & Send -->
+            <div class="step-card" id="step3">
+                <div class="step-header">
+                    <div class="step-number">3</div>
+                    <div class="step-title">👥 Send to Friend</div>
+                </div>
+                
+                <div class="friend-list" id="friendList">
+                    <div class="friend-item" data-friend="alice">
+                        <div class="friend-avatar">A</div>
+                        <div>
+                            <div style="font-weight: bold;">Alice Johnson</div>
+                            <div style="font-size: 12px; opacity: 0.8;">alice@example.com</div>
+                        </div>
+                    </div>
+                    <div class="friend-item" data-friend="bob">
+                        <div class="friend-avatar">B</div>
+                        <div>
+                            <div style="font-weight: bold;">Bob Smith</div>
+                            <div style="font-size: 12px; opacity: 0.8;">bob@example.com</div>
+                        </div>
+                    </div>
+                    <div class="friend-item" data-friend="charlie">
+                        <div class="friend-avatar">C</div>
+                        <div>
+                            <div style="font-weight: bold;">Charlie Brown</div>
+                            <div style="font-size: 12px; opacity: 0.8;">charlie@example.com</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 15px;">
+                    <div id="sendingStatus" style="display: none;">
+                        <div style="text-align: center; padding: 20px;">
+                            <div style="font-size: 24px; margin-bottom: 10px;">📤</div>
+                            <div>Uploading to Firebase Storage...</div>
+                            <div style="font-size: 12px; opacity: 0.8; margin-top: 5px;">Creating message document</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Step 4: Friend Receives -->
+            <div class="step-card" id="step4">
+                <div class="step-header">
+                    <div class="step-number">4</div>
+                    <div class="step-title">📬 Friend Receives</div>
+                </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <strong>Alice's Inbox:</strong>
+                </div>
+                
+                <div id="messageInbox">
+                    <div style="text-align: center; padding: 40px; opacity: 0.6;">
+                        No messages yet
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Step 5: Friend Opens & Views -->
+            <div class="step-card" id="step5">
+                <div class="step-header">
+                    <div class="step-number">5</div>
+                    <div class="step-title">👀 View with Timer</div>
+                </div>
+                
+                <div id="viewingArea">
+                    <div style="text-align: center; padding: 40px; opacity: 0.6;">
+                        Send a message to test viewing
+                    </div>
+                </div>
+                
+                <div style="margin-top: 15px;">
+                    <button class="btn btn-secondary" id="resetPipelineBtn">🔄 Reset Pipeline</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Debug Log -->
+        <div class="log-panel">
+            <h3>📝 Pipeline Debug Log</h3>
+            <div id="logOutput"></div>
+        </div>
+    </div>
+
+    <script>
+        // Global state
+        let currentVideoBlob = null;
+        let currentVideoURL = null;
+        let webStream = null;
+        let mediaRecorder = null;
+        let recordingTimer = null;
+        let isRecording = false;
+        let recordingTimeLeft = 10;
+        let sentMessages = [];
+        let currentStep = 1;
+        
+        // Mock Firebase-like storage
+        const mockFirebaseStorage = {
+            videos: new Map(),
+            messages: new Map(),
+            
+            async uploadVideo(blob) {
+                const id = 'video_' + Date.now();
+                const url = URL.createObjectURL(blob);
+                this.videos.set(id, { blob, url });
+                return { downloadURL: url, id };
+            },
+            
+            async createMessage(data) {
+                const id = 'msg_' + Date.now();
+                const message = {
+                    id,
+                    ...data,
+                    sentAt: new Date(),
+                    viewed: false,
+                    ttlPreset: '24h'
+                };
+                this.messages.set(id, message);
+                return message;
+            }
+        };
+        
+        // Logging function
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            document.getElementById('logOutput').appendChild(logEntry);
+            document.getElementById('logOutput').scrollTop = document.getElementById('logOutput').scrollHeight;
+            console.log(`[SnapConnect] ${message}`);
+        }
+        
+        // Update UI state
+        function updateUI() {
+            document.getElementById('currentStep').textContent = `${currentStep}. ${getStepName(currentStep)}`;
+            document.getElementById('videoCount').textContent = currentVideoBlob ? '1' : '0';
+            document.getElementById('messageCount').textContent = sentMessages.length;
+            
+            // Update step cards
+            document.querySelectorAll('.step-card').forEach((card, index) => {
+                card.classList.remove('active', 'completed');
+                if (index + 1 === currentStep) {
+                    card.classList.add('active');
+                } else if (index + 1 < currentStep) {
+                    card.classList.add('completed');
+                }
+            });
+        }
+        
+        function getStepName(step) {
+            const names = ['Record', 'Preview', 'Send', 'Receive', 'View'];
+            return names[step - 1] || 'Complete';
+        }
+        
+        // Step 1: Camera and Recording
+        async function startCamera() {
+            log('Starting camera...', 'info');
+            try {
+                webStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: true
+                });
+                
+                document.getElementById('videoElement').srcObject = webStream;
+                document.getElementById('flipCameraBtn').disabled = false;
+                document.getElementById('recordBtn').style.pointerEvents = 'auto';
+                document.getElementById('recordBtn').style.opacity = '1';
+                
+                log('Camera started successfully', 'success');
+                document.getElementById('pipelineState').textContent = 'Camera Ready';
+            } catch (error) {
+                log(`Camera error: ${error.message}`, 'error');
+                document.getElementById('pipelineState').textContent = 'Camera Error';
+            }
+        }
+        
+        async function startRecording() {
+            if (!webStream) {
+                log('No camera stream available', 'error');
+                return;
+            }
+            
+            log('Starting video recording...', 'info');
+            isRecording = true;
+            recordingTimeLeft = 10;
+            
+            try {
+                mediaRecorder = new MediaRecorder(webStream, { mimeType: 'video/webm' });
+                const chunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) chunks.push(event.data);
+                };
+                
+                mediaRecorder.onstop = () => {
+                    currentVideoBlob = new Blob(chunks, { type: 'video/webm' });
+                    currentVideoURL = URL.createObjectURL(currentVideoBlob);
+                    log(`Recording completed. Blob size: ${currentVideoBlob.size} bytes`, 'success');
+                    showPreview();
+                };
+                
+                mediaRecorder.start();
+                document.getElementById('recordingIndicator').classList.add('active');
+                document.getElementById('recordBtn').classList.add('recording');
+                
+                recordingTimer = setInterval(() => {
+                    recordingTimeLeft--;
+                    document.getElementById('recordingTimer').textContent = `${recordingTimeLeft}s`;
+                    
+                    if (recordingTimeLeft <= 0) {
+                        stopRecording();
+                    }
+                }, 1000);
+                
+            } catch (error) {
+                log(`Recording error: ${error.message}`, 'error');
+                isRecording = false;
+            }
+        }
+        
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+                
+                if (recordingTimer) {
+                    clearInterval(recordingTimer);
+                    recordingTimer = null;
+                }
+                
+                document.getElementById('recordingIndicator').classList.remove('active');
+                document.getElementById('recordBtn').classList.remove('recording');
+                log('Recording stopped', 'info');
+            }
+        }
+        
+        function simulateRecording() {
+            log('Simulating video recording...', 'info');
+            
+            // Create a simple canvas-based video simulation
+            const canvas = document.createElement('canvas');
+            canvas.width = 640;
+            canvas.height = 480;
+            const ctx = canvas.getContext('2d');
+            
+            // Draw a simple animated pattern
+            ctx.fillStyle = '#667eea';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '48px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Simulated Video', canvas.width/2, canvas.height/2);
+            ctx.font = '24px Arial';
+            ctx.fillText(new Date().toLocaleTimeString(), canvas.width/2, canvas.height/2 + 60);
+            
+            canvas.toBlob((blob) => {
+                // Create a mock video blob
+                currentVideoBlob = blob;
+                currentVideoURL = URL.createObjectURL(blob);
+                log('Simulated video created successfully', 'success');
+                showPreview();
+            }, 'image/png');
+        }
+        
+        // Step 2: Preview
+        function showPreview() {
+            currentStep = 2;
+            updateUI();
+            
+            const previewVideo = document.getElementById('previewVideo');
+            const placeholder = document.getElementById('previewPlaceholder');
+            
+            if (currentVideoURL) {
+                previewVideo.src = currentVideoURL;
+                previewVideo.style.display = 'block';
+                placeholder.style.display = 'none';
+                
+                document.getElementById('retakeBtn').disabled = false;
+                document.getElementById('sendToBtn').disabled = false;
+                
+                log('Video preview ready', 'success');
+                document.getElementById('pipelineState').textContent = 'Preview Ready';
+            }
+        }
+        
+        function retakeVideo() {
+            currentStep = 1;
+            currentVideoBlob = null;
+            if (currentVideoURL) {
+                URL.revokeObjectURL(currentVideoURL);
+                currentVideoURL = null;
+            }
+            
+            document.getElementById('previewVideo').style.display = 'none';
+            document.getElementById('previewPlaceholder').style.display = 'flex';
+            document.getElementById('retakeBtn').disabled = true;
+            document.getElementById('sendToBtn').disabled = true;
+            
+            updateUI();
+            log('Retaking video...', 'info');
+        }
+        
+        // Step 3: Send to Friend
+        function showSendToFriends() {
+            currentStep = 3;
+            updateUI();
+            log('Select a friend to send video to', 'info');
+            document.getElementById('pipelineState').textContent = 'Select Friend';
+        }
+        
+        async function sendToFriend(friendName) {
+            if (!currentVideoBlob) {
+                log('No video to send', 'error');
+                return;
+            }
+            
+            log(`Sending video to ${friendName}...`, 'info');
+            document.getElementById('sendingStatus').style.display = 'block';
+            document.getElementById('pipelineState').textContent = 'Uploading...';
+            
+            try {
+                // Simulate Firebase upload
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                const uploadResult = await mockFirebaseStorage.uploadVideo(currentVideoBlob);
+                
+                // Create message
+                const message = await mockFirebaseStorage.createMessage({
+                    senderId: 'current_user',
+                    recipientId: friendName,
+                    mediaURL: uploadResult.downloadURL,
+                    mediaType: 'video'
+                });
+                
+                sentMessages.push(message);
+                
+                log(`Video sent to ${friendName} successfully`, 'success');
+                document.getElementById('sendingStatus').style.display = 'none';
+                
+                // Move to step 4
+                showFriendReceives(message);
+                
+            } catch (error) {
+                log(`Send error: ${error.message}`, 'error');
+                document.getElementById('sendingStatus').style.display = 'none';
+            }
+        }
+        
+        // Step 4: Friend Receives
+        function showFriendReceives(message) {
+            currentStep = 4;
+            updateUI();
+            
+            const inbox = document.getElementById('messageInbox');
+            inbox.innerHTML = '';
+            
+            const messageItem = document.createElement('div');
+            messageItem.className = 'message-item unopened';
+            messageItem.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-weight: bold;">📹 Video from You</div>
+                        <div style="font-size: 12px; opacity: 0.8;">Tap to view • Expires in 24h</div>
+                    </div>
+                    <div style="font-size: 24px;">👁️</div>
+                </div>
+            `;
+            
+            messageItem.onclick = () => openMessage(message);
+            inbox.appendChild(messageItem);
+            
+            log('Message delivered to friend\'s inbox', 'success');
+            document.getElementById('pipelineState').textContent = 'Message Delivered';
+        }
+        
+        // Step 5: Friend Opens and Views
+        function openMessage(message) {
+            currentStep = 5;
+            updateUI();
+            
+            log('Friend opened the message', 'info');
+            document.getElementById('pipelineState').textContent = 'Viewing Video';
+            
+            const viewingArea = document.getElementById('viewingArea');
+            viewingArea.innerHTML = `
+                <div style="position: relative;">
+                    <video src="${message.mediaURL}" controls autoplay style="width: 100%; height: 200px; border-radius: 10px; background: #000;"></video>
+                    <div class="timer-overlay" id="viewTimer">24h</div>
+                </div>
+                <div style="margin-top: 15px; text-align: center;">
+                    <div style="font-size: 18px; font-weight: bold;">👀 Viewing Video</div>
+                    <div style="font-size: 12px; opacity: 0.8; margin-top: 5px;">Message will expire after viewing</div>
+                </div>
+            `;
+            
+            // Start countdown timer simulation
+            startViewingTimer();
+            
+            log('Video opened and playing with countdown timer', 'success');
+        }
+        
+        function startViewingTimer() {
+            let timeLeft = 10; // 10 seconds for demo
+            const timerEl = document.getElementById('viewTimer');
+            
+            const timer = setInterval(() => {
+                timeLeft--;
+                timerEl.textContent = `${timeLeft}s`;
+                
+                if (timeLeft <= 0) {
+                    clearInterval(timer);
+                    expireMessage();
+                }
+            }, 1000);
+        }
+        
+        function expireMessage() {
+            const viewingArea = document.getElementById('viewingArea');
+            viewingArea.innerHTML = `
+                <div style="text-align: center; padding: 40px; background: rgba(255, 59, 48, 0.1); border-radius: 10px; border: 1px solid #ff3b30;">
+                    <div style="font-size: 48px; margin-bottom: 10px;">⏰</div>
+                    <div style="font-size: 18px; font-weight: bold; color: #ff3b30;">Message Expired</div>
+                    <div style="font-size: 12px; opacity: 0.8; margin-top: 5px;">This video has been automatically deleted</div>
+                </div>
+            `;
+            
+            log('Message expired and deleted', 'warning');
+            document.getElementById('pipelineState').textContent = 'Message Expired';
+        }
+        
+        function resetPipeline() {
+            currentStep = 1;
+            currentVideoBlob = null;
+            if (currentVideoURL) {
+                URL.revokeObjectURL(currentVideoURL);
+                currentVideoURL = null;
+            }
+            sentMessages = [];
+            
+            // Reset UI
+            document.getElementById('previewVideo').style.display = 'none';
+            document.getElementById('previewPlaceholder').style.display = 'flex';
+            document.getElementById('retakeBtn').disabled = true;
+            document.getElementById('sendToBtn').disabled = true;
+            document.getElementById('sendingStatus').style.display = 'none';
+            
+            document.getElementById('messageInbox').innerHTML = `
+                <div style="text-align: center; padding: 40px; opacity: 0.6;">
+                    No messages yet
+                </div>
+            `;
+            
+            document.getElementById('viewingArea').innerHTML = `
+                <div style="text-align: center; padding: 40px; opacity: 0.6;">
+                    Send a message to test viewing
+                </div>
+            `;
+            
+            updateUI();
+            log('Pipeline reset to beginning', 'info');
+            document.getElementById('pipelineState').textContent = 'Ready';
+        }
+        
+        // Event listeners
+        document.getElementById('startCameraBtn').onclick = startCamera;
+        document.getElementById('recordBtn').onclick = () => {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        };
+        document.getElementById('simulateRecordBtn').onclick = simulateRecording;
+        document.getElementById('retakeBtn').onclick = retakeVideo;
+        document.getElementById('sendToBtn').onclick = showSendToFriends;
+        document.getElementById('resetPipelineBtn').onclick = resetPipeline;
+        
+        // Friend selection
+        document.querySelectorAll('.friend-item').forEach(item => {
+            item.onclick = () => {
+                const friendName = item.dataset.friend;
+                sendToFriend(friendName);
+            };
+        });
+        
+        // Initialize
+        log('SnapConnect End-to-End Pipeline Test initialized', 'success');
+        updateUI();
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (webStream) {
+                webStream.getTracks().forEach(track => track.stop());
+            }
+            if (currentVideoURL) {
+                URL.revokeObjectURL(currentVideoURL);
+            }
+        });
+    </script>
+</body>
+</html> 

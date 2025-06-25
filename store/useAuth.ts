@@ -65,8 +65,20 @@ export const useAuth = create<AuthState>((set) => ({
     }
   },
   signOut: async () => {
-    set({ user: null });
-    await firebaseSignOut(auth);
+    console.log('[Auth] Sign out initiated');
+    try {
+      set({ loading: true, error: null });
+      await firebaseSignOut(auth);
+      console.log('[Auth] Firebase sign out successful');
+      set({ user: null, loading: false, error: null });
+    } catch (error: any) {
+      console.error('[Auth] Sign out error:', error);
+      set({ 
+        loading: false, 
+        error: 'Failed to sign out. Please try again.' 
+      });
+      throw error; // Re-throw so calling component can handle
+    }
   },
   setUser: (user) => set({ user }),
 }));

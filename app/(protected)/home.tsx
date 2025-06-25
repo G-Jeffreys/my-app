@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, FlatList, StyleSheet, TouchableOpacity } from "react-native";
 import { collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
-import { firestore, auth } from "../../lib/firebase";
+import { firestore } from "../../lib/firebase";
+import { useAuth } from "../../store/useAuth";
 import { Message } from "../../models/firestore/message";
 import MessageItem from "../../components/MessageItem";
 import { useRouter } from "expo-router";
@@ -10,16 +11,17 @@ import Header from "../../components/Header";
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!auth.currentUser) return;
+    if (!user) return;
 
     const q = query(
       collection(firestore, "messages"),
-      where("recipientId", "==", auth.currentUser.uid),
-      orderBy("createdAt", "desc")
+      where("recipientId", "==", user.uid),
+      orderBy("sentAt", "desc")
     );
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
@@ -35,7 +37,7 @@ export default function HomeScreen() {
     });
 
     return () => unsubscribe();
-  }, [auth.currentUser]);
+  }, [user]);
 
   return (
     <SafeAreaView style={styles.container}>

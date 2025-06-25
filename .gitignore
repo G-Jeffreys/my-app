@@ -33,7 +33,8 @@ yarn-error.*
 *.pem
 
 # local env files
-env.ts
+.env
 
 # typescript
 *.tsbuildinfo
+*.apk

@@ -1,0 +1,10 @@
+{
+  "rules": {
+    "status": {
+      "$uid": {
+        ".read": "auth !== null && root.child('users').child(auth.uid).child('friends').child($uid).exists() && !root.child('users').child(auth.uid).child('blockedUsers').child($uid).exists() && !root.child('users').child($uid).child('blockedUsers').child(auth.uid).exists()",
+        ".write": "auth !== null && auth.uid === $uid"
+      }
+    }
+  }
+} 

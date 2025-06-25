@@ -32,12 +32,22 @@ This document tracks tasks that were intentionally skipped to prioritize core fu
   - [X] Create text message composition UI
   - [X] Integrate text messages with same TTL/friend system
   - [X] Update security rules for text message access
-- **[ ] 2.2 - Group Chat Architecture:** Support for 3-5 person groups
+- **[X] 2.2 - Group Chat Message Delivery Logic:** Backend support for group messaging
   - [X] Design `conversations` collection schema
-  - [ ] Implement group creation and management UI
-  - [ ] Add group message delivery and TTL logic
+  - [X] Enhanced message fetching for both individual + group messages
+  - [X] Group message creation with proper receipt generation
+  - [X] Group TTL logic (cleanup only when ALL participants expire)
+  - [X] Updated TextMessageComposer for group support
+  - [X] Updated select-friend screen for group recipients
+  - [X] Cloud Function cleanup handles group messages properly
   - [X] Update Firestore security rules for group access
   - [X] Implement group-specific receipt tracking
+- **[X] 2.3 - Group Chat UI Implementation:** Frontend for group management
+  - [X] Implement group creation and management UI (`create-group.tsx`)
+  - [X] Add group selection in camera/text flows (updated `select-friend.tsx`)
+  - [X] Group conversation list and management screen (`groups.tsx`)
+  - [X] Enhanced home screen with groups quick action
+  - [X] Complete group workflow: create → manage → message → TTL
 
 ### Phase 3: Future-Proofing for LLM/RAG 🔮 LOW PRIORITY
 - **[ ] 3.1 - LLM Summary Pipeline Architecture:** 

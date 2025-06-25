@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, getDoc, setDoc } from 'firebase/firestore';
 import { firestore, auth } from '../lib/firebase';
 import { useAuth } from '../store/useAuth';
 import TtlSelector from './TtlSelector';
@@ -67,7 +67,8 @@ const TextMessageComposer: React.FC<TextMessageComposerProps> = ({
       ttl: selectedTtl,
       recipientId,
       conversationId,
-      textLength: text.length
+      textLength: text.length,
+      messageType: conversationId ? 'group' : 'individual'
     });
 
     setIsSending(true);
@@ -94,10 +95,19 @@ const TextMessageComposer: React.FC<TextMessageComposerProps> = ({
 
       const messageRef = await addDoc(collection(firestore, 'messages'), messageData);
       
-      logTextMessage('✅ Message sent successfully', { 
+      logTextMessage('✅ Message document created', { 
         messageId: messageRef.id,
-        hasMedia: !!mediaURL 
+        hasMedia: !!mediaURL,
+        isGroup: !!conversationId
       });
+
+      // For group messages, we need to create receipts for all participants
+      if (conversationId) {
+        await createGroupReceipts(messageRef.id, conversationId, user.uid);
+      } else if (recipientId) {
+        // For individual messages, create receipt for the recipient
+        await createIndividualReceipt(messageRef.id, recipientId);
+      }
 
       // Reset form
       setText('');
@@ -110,13 +120,78 @@ const TextMessageComposer: React.FC<TextMessageComposerProps> = ({
         router.replace('/(protected)/home');
       }
 
-      Alert.alert('Success', 'Message sent!');
+      Alert.alert('Success', conversationId ? 'Message sent to group!' : 'Message sent!');
 
     } catch (error) {
       logTextMessage('❌ Error sending message', error);
       Alert.alert('Error', 'Failed to send message. Please try again.');
     } finally {
       setIsSending(false);
+    }
+  };
+
+  // Helper function to create receipts for group messages
+  const createGroupReceipts = async (messageId: string, conversationId: string, senderId: string) => {
+    try {
+      logTextMessage('📧 Creating group receipts', { messageId, conversationId });
+      
+      // Get conversation participants
+      const conversationRef = doc(firestore, 'conversations', conversationId);
+      const conversationSnap = await getDoc(conversationRef);
+      
+      if (!conversationSnap.exists()) {
+        throw new Error('Conversation not found');
+      }
+      
+      const conversationData = conversationSnap.data();
+      const participantIds = conversationData.participantIds || [];
+      
+      logTextMessage('📧 Found participants', { count: participantIds.length, participantIds });
+      
+      // Create receipts for all participants except sender
+      const receiptPromises = participantIds
+        .filter((participantId: string) => participantId !== senderId)
+        .map(async (participantId: string) => {
+          const receiptId = `${messageId}_${participantId}`;
+          const receiptData = {
+            messageId,
+            userId: participantId,
+            conversationId,
+            receivedAt: serverTimestamp(),
+            viewedAt: null,
+          };
+          
+          return setDoc(doc(firestore, 'receipts', receiptId), receiptData);
+        });
+      
+      await Promise.all(receiptPromises);
+      logTextMessage('✅ Group receipts created', { count: receiptPromises.length });
+      
+    } catch (error) {
+      logTextMessage('❌ Error creating group receipts', error);
+      // Don't throw - message was sent successfully, receipt creation is secondary
+    }
+  };
+
+  // Helper function to create receipt for individual messages
+  const createIndividualReceipt = async (messageId: string, recipientId: string) => {
+    try {
+      logTextMessage('📧 Creating individual receipt', { messageId, recipientId });
+      
+      const receiptId = `${messageId}_${recipientId}`;
+      const receiptData = {
+        messageId,
+        userId: recipientId,
+        receivedAt: serverTimestamp(),
+        viewedAt: null,
+      };
+      
+      await setDoc(doc(firestore, 'receipts', receiptId), receiptData);
+      logTextMessage('✅ Individual receipt created', { receiptId });
+      
+    } catch (error) {
+      logTextMessage('❌ Error creating individual receipt', error);
+      // Don't throw - message was sent successfully, receipt creation is secondary
     }
   };
 

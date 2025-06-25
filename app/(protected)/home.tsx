@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, FlatList, StyleSheet, TouchableOpacity } from "react-native";
-import { collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
+import { collection, query, where, onSnapshot, orderBy, getDocs } from "firebase/firestore";
 import { firestore } from "../../lib/firebase";
 import { useAuth } from "../../store/useAuth";
 import { Message } from "../../models/firestore/message";
@@ -19,35 +19,123 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (!user) {
-      console.log('[HomeScreen] No user found, returning early');
+      setLoading(false);
       return;
     }
 
     console.log('[HomeScreen] Setting up messages listener for user:', user.uid);
 
-    const q = query(
-      collection(firestore, "messages"),
-      where("recipientId", "==", user.uid),
-      orderBy("sentAt", "desc")
-    );
+    // Enhanced query to fetch both individual and group messages
+    // Individual messages: where recipientId == user.uid
+    // Group messages: where conversationId exists and user is participant
+    
+    // We need to fetch conversations first to get group message IDs
+    const fetchMessages = async () => {
+      try {
+        // 1. Get conversations where user is a participant
+        const conversationsQuery = query(
+          collection(firestore, "conversations"),
+          where("participantIds", "array-contains", user.uid)
+        );
+        
+        const conversationSnapshot = await getDocs(conversationsQuery);
+        const userConversationIds = conversationSnapshot.docs.map(doc => doc.id);
+        
+        console.log('[HomeScreen] User conversations found:', userConversationIds.length);
 
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      console.log('[HomeScreen] Messages snapshot received, docs count:', querySnapshot.size);
-      const fetchedMessages: Message[] = [];
-      querySnapshot.forEach((doc) => {
-        fetchedMessages.push({ id: doc.id, ...doc.data() } as Message);
-      });
-      console.log('[HomeScreen] Fetched messages:', fetchedMessages.length);
-      setMessages(fetchedMessages);
-      setLoading(false);
-    }, (error) => {
-      console.error("Error fetching messages: ", error);
-      setLoading(false);
-    });
+        // 2. Set up real-time listener for all messages
+        const messageQueries = [];
+        
+        // Individual messages query
+        const individualQuery = query(
+          collection(firestore, "messages"),
+          where("recipientId", "==", user.uid),
+          orderBy("sentAt", "desc")
+        );
+        messageQueries.push(individualQuery);
+        
+        // Group messages queries (Firestore limitation: need separate queries for each conversation)
+        userConversationIds.forEach(conversationId => {
+          const groupQuery = query(
+            collection(firestore, "messages"),
+            where("conversationId", "==", conversationId),
+            orderBy("sentAt", "desc")
+          );
+          messageQueries.push(groupQuery);
+        });
 
+        console.log('[HomeScreen] Setting up', messageQueries.length, 'message listeners');
+
+        // 3. Combine all message listeners
+        const unsubscribes: (() => void)[] = [];
+        const allMessages = new Map<string, Message>();
+        let completedQueries = 0;
+
+        const updateMessages = () => {
+          const sortedMessages = Array.from(allMessages.values()).sort((a, b) => {
+            const aTime = a.sentAt instanceof Date ? a.sentAt.getTime() : 
+                          (a.sentAt as any)?.seconds * 1000 || 0;
+            const bTime = b.sentAt instanceof Date ? b.sentAt.getTime() : 
+                          (b.sentAt as any)?.seconds * 1000 || 0;
+            return bTime - aTime; // Descending order (newest first)
+          });
+          
+          console.log('[HomeScreen] Combined messages updated:', sortedMessages.length);
+          setMessages(sortedMessages);
+          setLoading(false);
+        };
+
+        messageQueries.forEach((messageQuery, index) => {
+          const unsubscribe = onSnapshot(messageQuery, (querySnapshot) => {
+            console.log(`[HomeScreen] Query ${index} snapshot:`, querySnapshot.size, 'docs');
+            
+            // Remove old messages from this query
+            querySnapshot.docChanges().forEach((change) => {
+              if (change.type === 'removed') {
+                allMessages.delete(change.doc.id);
+              }
+            });
+            
+            // Add/update messages from this query
+            querySnapshot.forEach((doc) => {
+              const messageData = { id: doc.id, ...doc.data() } as Message;
+              allMessages.set(doc.id, messageData);
+            });
+            
+            completedQueries++;
+            if (completedQueries >= messageQueries.length || allMessages.size > 0) {
+              updateMessages();
+            }
+          }, (error) => {
+            console.error(`Error in message query ${index}:`, error);
+            setLoading(false);
+          });
+          
+          unsubscribes.push(unsubscribe);
+        });
+
+        // If no queries (no conversations), still set up individual messages
+        if (messageQueries.length === 1) {
+          // Only individual messages query
+          updateMessages();
+        }
+
+        return () => {
+          console.log('[HomeScreen] Cleaning up', unsubscribes.length, 'message listeners');
+          unsubscribes.forEach(unsub => unsub());
+        };
+
+      } catch (error) {
+        console.error('[HomeScreen] Error setting up message listeners:', error);
+        setLoading(false);
+        return () => {}; // Return empty cleanup function
+      }
+    };
+
+    const cleanupPromise = fetchMessages();
+    
     return () => {
-      console.log('[HomeScreen] Cleaning up messages listener');
-      unsubscribe();
+      cleanupPromise.then(cleanup => cleanup()).catch(console.error);
     };
   }, [user]);
 
@@ -109,6 +197,14 @@ export default function HomeScreen() {
         >
           <Text style={styles.quickActionIcon}>👥</Text>
           <Text style={styles.quickActionText}>Friends</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.quickActionButton, styles.groupsButton]}
+          onPress={() => router.push('/(protected)/groups')}
+        >
+          <Text style={styles.quickActionIcon}>💬</Text>
+          <Text style={styles.quickActionText}>Groups</Text>
         </TouchableOpacity>
         
         <TouchableOpacity 
@@ -206,6 +302,9 @@ const styles = StyleSheet.create({
   },
   friendsButton: {
     backgroundColor: '#e3f2fd',
+  },
+  groupsButton: {
+    backgroundColor: '#e8f5e8',
   },
   addFriendButton: {
     backgroundColor: '#f3e5f5',

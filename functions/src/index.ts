@@ -9,7 +9,7 @@
 
 import {setGlobalOptions} from "firebase-functions";
 import * as logger from "firebase-functions/logger";
-import {onDocumentUpdated, onDocumentCreated} from "firebase-functions/v2/firestore";
+import {onDocumentUpdated} from "firebase-functions/v2/firestore";
 import * as admin from "firebase-admin";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 
@@ -101,7 +101,7 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
   const now = admin.firestore.Timestamp.now();
   const messagesRef = db.collection("messages");
   const receiptsRef = db.collection("receipts");
-  
+
   let messagesProcessed = 0;
   let messagesDeleted = 0;
   let mediaFilesDeleted = 0;
@@ -128,7 +128,7 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
   try {
     // Get all messages
     const messagesSnapshot = await messagesRef.get();
-    
+
     if (messagesSnapshot.empty) {
       logger.info("📭 No messages to process.");
       return;
@@ -144,7 +144,7 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
       messagesProcessed++;
       const message = messageDoc.data();
       const messageId = messageDoc.id;
-      
+
       logger.info(`🔍 Checking message ${messageId} (TTL: ${message.ttlPreset})`);
 
       try {
@@ -152,15 +152,15 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
         if (message.recipientId) {
           const receiptId = `${messageId}_${message.recipientId}`;
           const receiptDoc = await receiptsRef.doc(receiptId).get();
-          
-          if (receiptDoc.exists()) {
+
+          if (receiptDoc.exists) {
             const receipt = receiptDoc.data();
             const receivedAt = receipt?.receivedAt as admin.firestore.Timestamp;
             const ttlMillis = ttlToMillis(message.ttlPreset);
-            
+
             if (receivedAt && receivedAt.toMillis() + ttlMillis < now.toMillis()) {
               logger.info(`⏰ Message ${messageId} expired for recipient ${message.recipientId}`);
-              
+
               // Delete media file if exists
               if (message.mediaURL) {
                 try {
@@ -176,13 +176,13 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
                   errors++;
                 }
               }
-              
+
               // Delete message document
               batch.delete(messageDoc.ref);
-              
+
               // Delete receipt
               batch.delete(receiptDoc.ref);
-              
+
               messagesDeleted++;
             } else {
               logger.info(`⏳ Message ${messageId} not yet expired (received: ${receivedAt?.toDate()?.toISOString()})`);
@@ -192,10 +192,10 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
             // Fallback to old behavior for messages without receipts
             const sentAt = message.sentAt as admin.firestore.Timestamp;
             const ttlMillis = ttlToMillis(message.ttlPreset);
-            
+
             if (sentAt.toMillis() + ttlMillis < now.toMillis()) {
               logger.info(`⏰ Message ${messageId} expired (using sentAt fallback)`);
-              
+
               if (message.mediaURL) {
                 try {
                   const fileUrl = new URL(message.mediaURL);
@@ -209,37 +209,37 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
                   errors++;
                 }
               }
-              
+
               batch.delete(messageDoc.ref);
               messagesDeleted++;
             }
           }
         }
-        
+
         // For group messages: check all participants' receipts
         else if (message.conversationId) {
           const receiptsQuery = await receiptsRef
             .where("messageId", "==", messageId)
             .get();
-          
+
           if (!receiptsQuery.empty) {
             let allExpired = true;
             const ttlMillis = ttlToMillis(message.ttlPreset);
-            
+
             // Check if message has expired for ALL recipients
             for (const receiptDoc of receiptsQuery.docs) {
               const receipt = receiptDoc.data();
               const receivedAt = receipt?.receivedAt as admin.firestore.Timestamp;
-              
+
               if (!receivedAt || receivedAt.toMillis() + ttlMillis >= now.toMillis()) {
                 allExpired = false;
                 break;
               }
             }
-            
+
             if (allExpired) {
               logger.info(`⏰ Group message ${messageId} expired for all recipients`);
-              
+
               // Delete media file
               if (message.mediaURL) {
                 try {
@@ -254,13 +254,13 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
                   errors++;
                 }
               }
-              
+
               // Delete message and all receipts
               batch.delete(messageDoc.ref);
               receiptsQuery.docs.forEach((receiptDoc) => {
                 batch.delete(receiptDoc.ref);
               });
-              
+
               messagesDeleted++;
             } else {
               logger.info(`⏳ Group message ${messageId} not yet expired for all recipients`);
@@ -278,7 +278,7 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
     // Commit all deletions
     if (messagesDeleted > 0) {
       await batch.commit();
-      logger.info(`✅ Cleanup batch committed successfully`);
+      logger.info("✅ Cleanup batch committed successfully");
     }
 
     // Emit cleanup success metric (T9 requirement)
@@ -289,18 +289,17 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
       errors,
       timestamp: now.toDate().toISOString(),
     };
-    
+
     logger.info("📊 Cleanup completed", cleanupStats);
-    
+
     // Log cleanup_success event for analytics
     logger.info("📈 cleanup_success", {
       structuredData: true,
       ...cleanupStats,
     });
-
   } catch (error) {
     logger.error("❌ Batch commit failed during cleanup.", {error});
-    
+
     // Log cleanup_error event
     logger.error("📈 cleanup_error", {
       structuredData: true,

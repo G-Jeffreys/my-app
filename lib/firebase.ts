@@ -299,9 +299,13 @@ if (Platform.OS === 'web') {
       console.log('[Firebase] Using default app (auto-configured):', app.name);
     } catch (error) {
       console.log('[Firebase] Default app not found, this should not happen with proper setup');
-      // Fallback: initialize manually (though this should not be needed)
-      app = RNFirebaseApp.initializeApp();
-      console.log('[Firebase] Initialized default app manually');
+      // Fallback: initialize manually (e.g. when the native files were cleaned or when running a fresh dev-client).
+      // We pass the explicit firebaseConfig so that the SDK has all the required
+      // keys even when google-services files are missing or have not been linked yet.
+      // This removes the "No Firebase App '[DEFAULT]' has been created" / "Firebase not initialised" runtime errors
+      // that occasionally occur when the default app can not be detected automatically.
+      app = RNFirebaseApp.initializeApp(firebaseConfig);
+      console.log('[Firebase] Initialized default app manually with explicit config');
     }
     
     firebaseApp = app;

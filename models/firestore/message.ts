@@ -6,7 +6,9 @@ export type FirestoreTimestamp = {
   nanoseconds: number;
 } | Date;
 
-export type MediaType = 'image' | 'video' | 'text';
+// Support both naming conventions that exist in the codebase (`photo` coming
+// from the camera screen and `image` coming from the Firestore model schema).
+export type MediaType = 'photo' | 'image' | 'video' | 'text';
 
 export interface Message {
   id: string;

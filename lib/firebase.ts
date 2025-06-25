@@ -189,6 +189,10 @@ export const timestampToDate = (timestamp: any): Date => {
   return new Date();
 };
 
+// Firebase Storage URLs are already properly encoded - no need for custom encoding
+// Removed the URL encoding function that was causing double-encoding issues
+console.log('[Firebase] URLs from Firebase Storage are used as-is');
+
 if (Platform.OS === 'web') {
   console.log('[Firebase] Initializing Firebase for web with mock services');
   
@@ -428,21 +432,9 @@ if (Platform.OS === 'web') {
 
     storage = {
       ref: (path?: string) => {
-        // Try to explicitly specify the bucket if path is provided
-        let ref;
-        if (path) {
-          try {
-            // Try with explicit bucket reference
-            ref = rawStorage.refFromURL(`gs://snapconnect-6108c.firebasestorage.app/${path}`);
-            console.log('[Firebase] Created storage ref with explicit bucket URL for path:', path);
-          } catch (urlError) {
-            console.log('[Firebase] Fallback to standard ref for path:', path);
-            ref = rawStorage.ref(path);
-          }
-        } else {
-          ref = rawStorage.ref();
-        }
-        
+        // Simplified: rely on SDK's default bucket config. Using ref(path) avoids
+        // edge-cases where refFromURL+getDownloadURL produces links that later 400.
+        const ref = path ? rawStorage.ref(path) : rawStorage.ref();
         return {
           put: ref.put.bind(ref),
           getDownloadURL: ref.getDownloadURL.bind(ref)

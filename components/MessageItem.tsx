@@ -113,8 +113,17 @@ export default function MessageItem({ message }: MessageItemProps) {
   return (
     <TouchableOpacity style={styles.container} onPress={handleOpenMessage}>
       <View style={styles.thumbnail}>
-        {/* Display media based on type - simplified for unified API */}
-        <Image source={{ uri: message.mediaURL || undefined }} style={styles.image} />
+        {(!message.mediaURL || message.mediaURL.startsWith('mock://')) ? (
+          <View style={[styles.image, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0f0f0' }]}> 
+            <Text>🖼️</Text>
+          </View>
+        ) : (
+          <Image 
+            source={{ uri: message.mediaURL }} 
+            style={styles.image} 
+            onError={(e) => console.error('[MessageItem] Thumbnail load error:', e.nativeEvent.error)}
+          />
+        )}
         {isOpened ? (
           <Text>Opened</Text>
         ) : (

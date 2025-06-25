@@ -20,12 +20,16 @@ if (Platform.OS !== 'web') {
 
 const TTL_PRESETS = ['30s', '1m', '5m', '1h', '6h', '24h'];
 
+console.log('🔥 BUNDLE VERSION', Date.now());
+
 const PreviewScreen = () => {
-  const { uri, mediaType, recipientId, recipientName, readonly } = useLocalSearchParams<{ uri: string; mediaType: 'photo' | 'video', recipientId?: string, recipientName?: string, readonly?: string }>();
+  const { uri, mediaType, recipientId, recipientName, readonly } = useLocalSearchParams<{ uri: string; mediaType: 'photo' | 'video' | 'image', recipientId?: string, recipientName?: string, readonly?: string }>();
   const { user } = useAuth();
   const [selectedTtl, setSelectedTtl] = useState('1h');
   const [videoError, setVideoError] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  // Track image loading failures so we can show a fallback instead of a blank screen
+  const [imgError, setImgError] = useState(false);
 
   useEffect(() => {
     const fetchDefaultTtl = async () => {
@@ -210,37 +214,25 @@ const PreviewScreen = () => {
           userUid: user.uid
         });
         
-        const uploadTask = await storageRef.put(blob);
+        const uploadSnapshot = await storageRef.put(blob);
         
         console.log('[Preview] Upload completed successfully');
-        console.log('[Preview] Upload task state:', uploadTask.state);
-        console.log('[Preview] Upload metadata:', uploadTask.metadata);
-        
-        // Get download URL with retry logic
-        console.log('[Preview] Getting download URL...');
-        let retries = 3;
-        let downloadURLError: any;
-        
-        for (let i = 0; i < retries; i++) {
-          try {
-            downloadURL = await storageRef.getDownloadURL();
-            console.log(`[Preview] ${mediaType} uploaded successfully:`, downloadURL);
-            break;
-          } catch (urlError: any) {
-            downloadURLError = urlError;
-            console.warn(`[Preview] Download URL attempt ${i + 1} failed:`, urlError.message);
-            
-            if (i < retries - 1) {
-              // Wait before retry
-              await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
-              console.log(`[Preview] Retrying download URL (attempt ${i + 2})...`);
-            }
-          }
+        console.log('[Preview] Upload metadata:', uploadSnapshot.metadata);
+
+        // Prefer the snapshot's ref (if available). Some RN-Firebase versions
+        // omit this property, in which case fall back to the original storageRef.
+        if ((uploadSnapshot as any)?.ref?.getDownloadURL) {
+          downloadURL = await (uploadSnapshot as any).ref.getDownloadURL();
+          console.log('[Preview] Download URL obtained via snapshot.ref:', downloadURL);
+        } else {
+          console.warn('[Preview] uploadSnapshot.ref undefined – falling back to storageRef.getDownloadURL()');
+          downloadURL = await storageRef.getDownloadURL();
+          console.log('[Preview] Download URL obtained via storageRef:', downloadURL);
         }
         
-        if (!downloadURL) {
-          throw downloadURLError || new Error('Failed to get download URL after retries');
-        }
+        // Firebase Storage already returns properly encoded URLs
+        // The URL normalization code was causing double-encoding issues
+        console.log('[Preview] Using download URL as-is from Firebase Storage:', downloadURL);
         
       } catch (uploadError: any) {
         console.error('[Preview] Upload failed with error:', uploadError);
@@ -333,10 +325,37 @@ const PreviewScreen = () => {
   };
 
   const renderMedia = () => {
-    console.log('[Preview] Rendering media:', { mediaType, uri, platform: Platform.OS });
-    
-    if (mediaType === 'photo') {
-      return <Image source={{ uri }} style={styles.image} resizeMode="cover" />;
+    console.log('[Preview] Rendering media:', { mediaType, uri, platform: Platform.OS, readonly });
+    console.log('[Preview] Image error state:', imgError);
+    console.log('[Preview] Video error state:', videoError);
+
+    // Handle static images / photos ---------------------------------------
+    if (mediaType === 'photo' || mediaType === 'image') {
+      if (imgError || !uri || uri.startsWith('mock://')) {
+        return (
+          <View style={[styles.image, styles.mockMedia]}> 
+            <Text style={styles.mockMediaText}>🖼️</Text>
+            <Text style={styles.mockMediaSubtext}>Image Preview</Text>
+            {imgError && (
+              <Text style={styles.errorText}>Failed to load image</Text>
+            )}
+          </View>
+        );
+      }
+
+      return (
+        <Image
+          source={{ uri }}
+          style={styles.image}
+          resizeMode="cover"
+          onError={(e) => {
+            console.error('[Preview] Image load error:', e.nativeEvent.error);
+            setImgError(true);
+          }}
+        />
+      );
+
+    // Handle videos --------------------------------------------------------
     } else {
       // Handle video based on platform and source
       if (Platform.OS === 'web' || uri?.startsWith('mock://') || !Video || videoError) {

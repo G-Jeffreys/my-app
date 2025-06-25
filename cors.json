@@ -1,0 +1,8 @@
+[
+    {
+      "origin": ["http://localhost:8081", "http://localhost:19006", "https://*.web.app", "https://*.firebaseapp.com"],
+      "method": ["GET", "PUT", "POST", "DELETE"],
+      "responseHeader": ["Content-Type", "Authorization"],
+      "maxAgeSeconds": 3600
+    }
+]

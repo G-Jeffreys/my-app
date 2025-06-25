@@ -1,7 +1,7 @@
 import { View, Text, TouchableOpacity, FlatList } from "react-native";
 import { useAuth } from "../../store/useAuth";
 import { Link } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { firestore } from "../../lib/firebase";
 import { Message } from "../../models/firestore/message";
 import MessageItem from "../../components/MessageItem";
@@ -11,8 +11,9 @@ import Header from "../../components/Header";
 const Home = () => {
   const { signOut, user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
-  const [loggedReceived, setLoggedReceived] = useState<string[]>([]);
+  const loggedReceivedRef = useRef<Set<string>>(new Set());
 
+  // Persistent Firestore listener – cleans up on component unmount only
   useEffect(() => {
     if (!user) {
       console.log('[Home] No user, skipping message loading');
@@ -21,35 +22,31 @@ const Home = () => {
 
     console.log('[Home] Setting up message listener for user:', user.uid);
 
-    try {
-      // Use unified Firebase API
-      const q = firestore.collection("messages").where("recipientId", "==", user.uid);
-      
-      const unsubscribe = q.onSnapshot((snapshot) => {
-        console.log('[Home] Received', snapshot.docs.length, 'messages');
-        const newMessages: Message[] = [];
-        snapshot.forEach((doc) => {
-          const message = { id: doc.id, ...doc.data() } as Message;
-          newMessages.push(message);
-          if (!loggedReceived.includes(message.id)) {
-            logEvent(ANALYTICS_EVENTS.MEDIA_RECEIVED, {
-              mediaType: message.mediaType,
-              senderId: message.senderId,
-            });
-            setLoggedReceived(prev => [...prev, message.id]);
-          }
-        });
-        setMessages(newMessages);
-      });
+    const q = firestore.collection('messages').where('recipientId', '==', user.uid);
 
-      return () => {
-        console.log('[Home] Cleaning up message listener');
-        unsubscribe();
-      };
-    } catch (error) {
-      console.error('[Home] Error setting up message listener:', error);
-    }
-  }, [user]);
+    const unsubscribe = q.onSnapshot((snapshot) => {
+      console.log('[Home] Received', snapshot.docs.length, 'messages');
+      const newMessages: Message[] = [];
+      snapshot.forEach((doc) => {
+        const message = { id: doc.id, ...doc.data() } as Message;
+        newMessages.push(message);
+
+        if (!loggedReceivedRef.current.has(message.id)) {
+          loggedReceivedRef.current.add(message.id);
+          logEvent(ANALYTICS_EVENTS.MEDIA_RECEIVED, {
+            mediaType: message.mediaType,
+            senderId: message.senderId,
+          });
+        }
+      });
+      setMessages(newMessages);
+    });
+
+    return () => {
+      console.log('[Home] Cleaning up message listener on unmount');
+      unsubscribe();
+    };
+  }, [user?.uid]);
 
   return (
     <View className="flex-1 bg-white">

@@ -13,10 +13,17 @@ export type MediaType = 'photo' | 'image' | 'video' | 'text';
 export interface Message {
   id: string;
   senderId: string;
-  recipientId: string;
+  // Support both individual and group messaging
+  recipientId?: string; // For individual messages (legacy support)
+  conversationId?: string; // For group messages
   mediaURL: string | null; // Null for text messages
   mediaType: MediaType;
   ttlPreset: TtlPreset;
   sentAt: FirestoreTimestamp;
-  text: string | null; // For text messages
+  text: string | null; // For text messages - can be combined with media for captions
+  
+  // Future-proofing for LLM integration
+  hasSummary?: boolean; // Flag to indicate if this message has an LLM summary
+  summaryGenerated?: boolean; // Flag to track summary generation status
+  ephemeralOnly?: boolean; // Flag to disable summary generation for this message
 } 

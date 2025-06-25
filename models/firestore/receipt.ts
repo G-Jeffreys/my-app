@@ -5,7 +5,10 @@ export type FirestoreTimestamp = {
 } | Date;
 
 export interface Receipt {
-  userId: string;
-  receivedAt: FirestoreTimestamp | null;
-  viewedAt: FirestoreTimestamp | null;
+  id: string;
+  messageId: string; // Reference to the message
+  userId: string; // User who received the message
+  receivedAt: FirestoreTimestamp; // When the message was received/downloaded by this user
+  viewedAt: FirestoreTimestamp | null; // When the message was first opened by this user
+  conversationId?: string; // For group message receipts
 } 

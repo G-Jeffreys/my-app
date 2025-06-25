@@ -6,12 +6,15 @@ import { firestore } from '../../lib/firebase';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Header from '../../components/Header';
 import ConfirmDialog from '../../components/ConfirmDialog';
+import TtlSelector from '../../components/TtlSelector';
 import { useRouter } from 'expo-router';
+import { DEFAULT_TTL_PRESET, TtlPreset } from '../../config/messaging';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const { user, signOut, setUser } = useAuth();
   const [newDisplayName, setNewDisplayName] = useState(user?.displayName || "");
+  const [selectedTtl, setSelectedTtl] = useState<TtlPreset>(user?.defaultTtl as TtlPreset || DEFAULT_TTL_PRESET);
   const [loading, setLoading] = useState(false);
   const [showSignOutDialog, setShowSignOutDialog] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
@@ -33,14 +36,15 @@ export default function SettingsScreen() {
       const userRef = doc(firestore, "users", user.uid);
       await updateDoc(userRef, {
         displayName: newDisplayName,
+        defaultTtl: selectedTtl,
       });
 
       // Update the local user state in Zustand
-      const updatedUser = { ...user, displayName: newDisplayName };
+      const updatedUser = { ...user, displayName: newDisplayName, defaultTtl: selectedTtl };
       setUser(updatedUser);
 
       console.log('[SettingsScreen] Profile updated successfully');
-      setUpdateMessage("Your display name has been updated.");
+      setUpdateMessage("Your profile has been updated.");
       setShowUpdateDialog(true);
     } catch (error) {
       console.error("[SettingsScreen] Error updating profile:", error);
@@ -139,6 +143,26 @@ export default function SettingsScreen() {
               )}
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* TTL Settings Section */}
+        <View style={styles.section}>
+          <TtlSelector
+            selectedTtl={selectedTtl}
+            onTtlChange={setSelectedTtl}
+          />
+          
+          <TouchableOpacity
+            style={[styles.updateButton, loading && styles.buttonDisabled]}
+            onPress={handleUpdateProfile}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.updateButtonText}>Save Settings</Text>
+            )}
+          </TouchableOpacity>
         </View>
 
         {/* Quick Actions Section */}

@@ -6,22 +6,19 @@ import {
   signOut as firebaseSignOut,
   User as FirebaseUser,
 } from "firebase/auth";
-import { auth } from "../lib/firebase";
-
-interface User {
-  uid: string;
-  email: string | null;
-  displayName: string | null;
-}
+import { auth, firestore } from "../lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { User } from "../models/firestore/user";
+import { DEFAULT_TTL_PRESET } from "../config/messaging";
 
 interface AuthState {
-  user: User | null;
+  user: (User & { uid: string }) | null; // Keep uid for backward compatibility
   loading: boolean;
   error: string | null;
   initialize: () => () => void; // Returns the unsubscribe function
   handleGoogleSignIn: (id_token: string | undefined) => Promise<void>;
   signOut: () => Promise<void>;
-  setUser: (user: User | null) => void;
+  setUser: (user: (User & { uid: string }) | null) => void;
 }
 
 export const useAuth = create<AuthState>((set) => ({
@@ -29,20 +26,62 @@ export const useAuth = create<AuthState>((set) => ({
   loading: true,
   error: null,
   initialize: () => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       console.log(
         "[Auth] Auth state changed:",
         firebaseUser ? firebaseUser.email : "signed out"
       );
       if (firebaseUser) {
-        set({
-          user: {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            displayName: firebaseUser.displayName,
-          },
-          loading: false,
-        });
+        try {
+          // Fetch the full user document from Firestore
+          const userDocRef = doc(firestore, "users", firebaseUser.uid);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            set({
+              user: {
+                id: firebaseUser.uid,
+                uid: firebaseUser.uid, // Keep for backward compatibility
+                email: firebaseUser.email,
+                displayName: userData.displayName || firebaseUser.displayName || "",
+                photoURL: userData.photoURL || firebaseUser.photoURL,
+                createdAt: userData.createdAt,
+                defaultTtl: userData.defaultTtl || DEFAULT_TTL_PRESET,
+              } as User & { uid: string }, // Add uid for compatibility
+              loading: false,
+            });
+          } else {
+            // Fallback to Firebase Auth data if Firestore doc doesn't exist
+            set({
+              user: {
+                id: firebaseUser.uid,
+                uid: firebaseUser.uid,
+                email: firebaseUser.email,
+                displayName: firebaseUser.displayName || "",
+                photoURL: firebaseUser.photoURL,
+                createdAt: new Date(),
+                defaultTtl: DEFAULT_TTL_PRESET,
+              } as User & { uid: string },
+              loading: false,
+            });
+          }
+        } catch (error) {
+          console.error("[Auth] Error fetching user data from Firestore:", error);
+          // Fallback to Firebase Auth data
+          set({
+            user: {
+              id: firebaseUser.uid,
+              uid: firebaseUser.uid,
+              email: firebaseUser.email,
+              displayName: firebaseUser.displayName || "",
+              photoURL: firebaseUser.photoURL,
+              createdAt: new Date(),
+              defaultTtl: DEFAULT_TTL_PRESET,
+            } as User & { uid: string },
+            loading: false,
+          });
+        }
       } else {
         set({ user: null, loading: false });
       }

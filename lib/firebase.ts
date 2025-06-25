@@ -7,6 +7,7 @@ const firebaseConfig = {
   projectId: env.FB_PROJECT_ID,
   appId: env.FB_APP_ID,
   databaseURL: env.FB_DATABASE_URL,
+  storageBucket: 'snapconnect-6108c.firebasestorage.app',
 };
 
 // Platform-agnostic Firebase service types
@@ -289,31 +290,24 @@ if (Platform.OS === 'web') {
     
     console.log('[Firebase] Modules imported successfully');
     
-    // For v22+, we need to explicitly initialize the app if it doesn't exist
+    // React Native Firebase auto-detects configuration from google-services.json
+    // We should use the default app which is automatically initialized
     let app;
     try {
-      // Try to get the default app
+      // Get the default app (should be auto-initialized from google-services.json)
       app = RNFirebaseApp.getApp();
-      console.log('[Firebase] Found existing default app:', app.name);
+      console.log('[Firebase] Using default app (auto-configured):', app.name);
     } catch (error) {
-      console.log('[Firebase] No default app found, initializing...');
-      
-      // Initialize the app with config from google-services.json
-      // For React Native, the config should be auto-detected from google-services.json
-      app = RNFirebaseApp.initializeApp({
-        apiKey: env.FB_API_KEY,
-        authDomain: env.FB_AUTH_DOMAIN,
-        projectId: env.FB_PROJECT_ID,
-        storageBucket: `${env.FB_PROJECT_ID}.appspot.com`,
-        messagingSenderId: "435345795137", // From google-services.json
-        appId: env.FB_APP_ID,
-        databaseURL: env.FB_DATABASE_URL,
-      });
-      console.log('[Firebase] App initialized manually:', app.name);
+      console.log('[Firebase] Default app not found, this should not happen with proper setup');
+      // Fallback: initialize manually (though this should not be needed)
+      app = RNFirebaseApp.initializeApp();
+      console.log('[Firebase] Initialized default app manually');
     }
     
     firebaseApp = app;
     console.log('[Firebase] Using app:', firebaseApp.name);
+    console.log('[Firebase] App options:', app.options);
+    console.log('[Firebase] Storage bucket from app:', app.options?.storageBucket);
     
     // Initialize services with the app instance
     const rawAuth = RNFirebaseAuth.getAuth(app);
@@ -327,6 +321,11 @@ if (Platform.OS === 'web') {
     
     const rawStorage = RNFirebaseStorage.getStorage(app);
     console.log('[Firebase] Storage instance created');
+    console.log('[Firebase] Storage app details:', {
+      appName: rawStorage.app.name,
+      appOptions: rawStorage.app.options,
+      storageBucket: rawStorage.app.options?.storageBucket
+    });
     
     console.log('[Firebase] All services initialized successfully');
     
@@ -425,7 +424,21 @@ if (Platform.OS === 'web') {
 
     storage = {
       ref: (path?: string) => {
-        const ref = path ? rawStorage.ref(path) : rawStorage.ref();
+        // Try to explicitly specify the bucket if path is provided
+        let ref;
+        if (path) {
+          try {
+            // Try with explicit bucket reference
+            ref = rawStorage.refFromURL(`gs://snapconnect-6108c.firebasestorage.app/${path}`);
+            console.log('[Firebase] Created storage ref with explicit bucket URL for path:', path);
+          } catch (urlError) {
+            console.log('[Firebase] Fallback to standard ref for path:', path);
+            ref = rawStorage.ref(path);
+          }
+        } else {
+          ref = rawStorage.ref();
+        }
+        
         return {
           put: ref.put.bind(ref),
           getDownloadURL: ref.getDownloadURL.bind(ref)

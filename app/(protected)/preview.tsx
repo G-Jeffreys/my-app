@@ -1,4 +1,4 @@
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, Image, TouchableOpacity, StyleSheet, Platform, Alert } from 'react-native';
 import React, { useState, useEffect } from 'react';
 import { useLocalSearchParams, router } from 'expo-router';
 import { firestore, storage } from '../../lib/firebase';
@@ -6,52 +6,282 @@ import { useAuth } from '../../store/useAuth';
 import { ANALYTICS_EVENTS, logEvent } from '../../lib/analytics';
 import Header from '../../components/Header';
 
+// Import Video component for mobile platforms
+let Video: any = null;
+if (Platform.OS !== 'web') {
+  try {
+    const VideoModule = require('react-native-video');
+    Video = VideoModule.default || VideoModule;
+    console.log('[Preview] Video module loaded successfully');
+  } catch (error) {
+    console.error('[Preview] Failed to load Video module:', error);
+  }
+}
+
 const TTL_PRESETS = ['30s', '1m', '5m', '1h', '6h', '24h'];
 
 const PreviewScreen = () => {
   const { uri, mediaType, recipientId, recipientName, readonly } = useLocalSearchParams<{ uri: string; mediaType: 'photo' | 'video', recipientId?: string, recipientName?: string, readonly?: string }>();
   const { user } = useAuth();
   const [selectedTtl, setSelectedTtl] = useState('1h');
+  const [videoError, setVideoError] = useState(false);
+  const [isSending, setIsSending] = useState(false);
 
   useEffect(() => {
     const fetchDefaultTtl = async () => {
-      if (!user) return;
+      if (!user) {
+        console.log('[Preview] No user available, skipping default TTL fetch');
+        return;
+      }
       
       console.log('[Preview] Fetching default TTL for user:', user.uid);
       
       try {
+        // Validate firestore instance
+        if (!firestore) {
+          console.error('[Preview] Firestore instance is null or undefined');
+          return;
+        }
+        
         // Use unified Firebase API
         const userRef = firestore.collection('users').doc(user.uid);
+        console.log('[Preview] Created user reference, fetching document...');
+        
         const userSnap = await userRef.get();
-        if (userSnap.exists() && userSnap.data()?.defaultTtl) {
-          setSelectedTtl(userSnap.data()!.defaultTtl);
-          console.log('[Preview] Using saved default TTL:', userSnap.data()!.defaultTtl);
+        console.log('[Preview] Document fetch complete, exists:', userSnap.exists());
+        
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          console.log('[Preview] User data found:', userData);
+          
+          if (userData?.defaultTtl) {
+            setSelectedTtl(userData.defaultTtl);
+            console.log('[Preview] ✅ Using saved default TTL:', userData.defaultTtl);
+          } else {
+            console.log('[Preview] No defaultTtl field found in user data, using default 1h');
+          }
+        } else {
+          console.log('[Preview] User document does not exist, using default 1h');
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('[Preview] Error fetching default TTL:', error);
+        console.error('[Preview] Error details:', {
+          message: error?.message || 'Unknown error',
+          code: error?.code || 'No error code'
+        });
       }
     };
     fetchDefaultTtl();
   }, [user]);
 
   const handleSend = async () => {
-    if (!uri || !user || !mediaType || !recipientId) return;
+    console.log('[Preview] Send button pressed');
+    console.log('[Preview] Current state:', { uri, user: !!user, mediaType, recipientId, recipientName });
+    
+    if (!uri || !user || !mediaType || !recipientId) {
+      console.error('[Preview] Missing required data for sending:', {
+        hasUri: !!uri,
+        hasUser: !!user,
+        hasMediaType: !!mediaType,
+        hasRecipientId: !!recipientId
+      });
+      Alert.alert('Error', 'Missing required information to send message');
+      return;
+    }
+
+    setIsSending(true);
 
     try {
-      console.log(`[Preview] Uploading ${mediaType}...`);
+      console.log(`[Preview] Starting to upload ${mediaType}...`);
       
-      // Use unified Firebase API for upload
+      // Handle mock URIs differently
+      if (uri.startsWith('mock://')) {
+        console.log('[Preview] Detected mock URI, creating mock message...');
+        
+        // For mock media, create a message without actual file upload
+        await firestore.collection('messages').add({
+          senderId: user.uid,
+          recipientId: recipientId,
+          mediaURL: uri, // Keep the mock URI for testing
+          mediaType: mediaType,
+          ttlPreset: selectedTtl,
+          sentAt: firestore.FieldValue.serverTimestamp(),
+        });
+        
+        console.log('[Preview] Mock message document created successfully');
+        
+        await logEvent(ANALYTICS_EVENTS.MEDIA_SENT, {
+          mediaType: `mock_${mediaType}`,
+          ttl: selectedTtl,
+          recipientId,
+        });
+        
+        Alert.alert('Success', 'Mock message sent successfully!');
+        router.replace('/(protected)/home');
+        return;
+      }
+      
+      // Handle real file upload
+      console.log('[Preview] Uploading real media file...');
+      
+      // Validate Firebase storage
+      if (!storage) {
+        throw new Error('Firebase Storage is not initialized');
+      }
+      
+      console.log('[Preview] Storage instance confirmed, testing storage bucket access...');
+      
+      // Log current user for debugging
+      console.log('[Preview] Current user ID:', user.uid);
+      console.log('[Preview] User auth state:', {
+        uid: user.uid,
+        email: user.email || 'no email'
+      });
+      
+      // Fetch the file and create blob
+      console.log('[Preview] Fetching file from URI:', uri);
       const response = await fetch(uri);
-      const blob = await response.blob();
-
-      const storageRef = storage.ref(`media/${user.uid}/${Date.now()}`);
       
-      await storageRef.put(blob);
-      const downloadURL = await storageRef.getDownloadURL();
-      console.log(`[Preview] ${mediaType} uploaded:`, downloadURL);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch file: ${response.status} ${response.statusText}`);
+      }
+      
+      const blob = await response.blob();
+      console.log('[Preview] File blob created, size:', blob.size, 'type:', blob.type);
+      
+      if (blob.size === 0) {
+        throw new Error('File is empty or could not be read');
+      }
+
+      // Create storage reference with proper file extension
+      const fileName = `${Date.now()}_${mediaType}.${mediaType === 'photo' ? 'jpg' : 'mp4'}`;
+      const filePath = `media/${user.uid}/${fileName}`;
+      
+      console.log('[Preview] Creating storage reference for path:', filePath);
+      console.log('[Preview] User authenticated:', !!user.uid);
+      console.log('[Preview] Storage bucket info available');
+      
+      // Test if we can create a reference to the bucket root first
+      try {
+        const rootRef = storage.ref();
+        console.log('[Preview] Root storage reference created successfully');
+        
+        // Test access to user's media folder
+        const userMediaRef = storage.ref(`media/${user.uid}`);
+        console.log('[Preview] User media folder reference created successfully');
+        
+        // Try to get the actual bucket name being used
+        console.log('[Preview] Testing storage bucket access...');
+        console.log('[Preview] Storage reference details:', {
+          rootRef: typeof rootRef,
+          userMediaRef: typeof userMediaRef,
+          hasGetDownloadURL: typeof rootRef.getDownloadURL,
+          hasPut: typeof rootRef.put
+        });
+      } catch (rootError) {
+        console.error('[Preview] Failed to create storage references:', rootError);
+        throw new Error('Storage bucket not accessible');
+      }
+      
+      const storageRef = storage.ref(filePath);
+      console.log('[Preview] Storage reference created for path:', filePath);
+      
+      // Upload file with metadata
+      console.log('[Preview] Starting file upload...');
+      console.log('[Preview] Upload metadata:', {
+        contentType: blob.type,
+        size: blob.size,
+        customMetadata: {
+          uploadedBy: user.uid,
+          mediaType: mediaType,
+          originalFileName: fileName
+        }
+      });
+      
+      let downloadURL: string | undefined;
+      
+      try {
+        // Upload the file
+        console.log('[Preview] Uploading file...');
+        console.log('[Preview] File details:', {
+          size: blob.size,
+          type: blob.type,
+          path: filePath,
+          userUid: user.uid
+        });
+        
+        const uploadTask = await storageRef.put(blob);
+        
+        console.log('[Preview] Upload completed successfully');
+        console.log('[Preview] Upload task state:', uploadTask.state);
+        console.log('[Preview] Upload metadata:', uploadTask.metadata);
+        
+        // Get download URL with retry logic
+        console.log('[Preview] Getting download URL...');
+        let retries = 3;
+        let downloadURLError: any;
+        
+        for (let i = 0; i < retries; i++) {
+          try {
+            downloadURL = await storageRef.getDownloadURL();
+            console.log(`[Preview] ${mediaType} uploaded successfully:`, downloadURL);
+            break;
+          } catch (urlError: any) {
+            downloadURLError = urlError;
+            console.warn(`[Preview] Download URL attempt ${i + 1} failed:`, urlError.message);
+            
+            if (i < retries - 1) {
+              // Wait before retry
+              await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+              console.log(`[Preview] Retrying download URL (attempt ${i + 2})...`);
+            }
+          }
+        }
+        
+        if (!downloadURL) {
+          throw downloadURLError || new Error('Failed to get download URL after retries');
+        }
+        
+      } catch (uploadError: any) {
+        console.error('[Preview] Upload failed with error:', uploadError);
+        console.error('[Preview] Upload error details:', {
+          code: uploadError.code,
+          message: uploadError.message,
+          name: uploadError.name,
+          stack: uploadError.stack
+        });
+        
+        // Enhanced error handling
+        if (uploadError.code === 'storage/object-not-found') {
+          console.error('[Preview] Storage object not found - checking storage setup...');
+          console.error('[Preview] Verify: 1) Storage bucket exists, 2) Storage rules allow upload, 3) User is authenticated');
+          
+          // Try to verify storage bucket exists
+          try {
+            const bucketRef = storage.ref();
+            console.log('[Preview] Storage bucket reference:', bucketRef);
+          } catch (bucketError) {
+            console.error('[Preview] Storage bucket verification failed:', bucketError);
+          }
+        } else if (uploadError.code === 'storage/unauthorized') {
+          console.error('[Preview] Storage unauthorized - check storage rules and user authentication');
+        } else if (uploadError.code === 'storage/canceled') {
+          console.error('[Preview] Upload was canceled');
+        } else if (uploadError.code === 'storage/unknown') {
+          console.error('[Preview] Unknown storage error - check Firebase configuration');
+        }
+        
+        throw uploadError;
+      }
+
+      // Validate Firestore
+      if (!firestore) {
+        throw new Error('Firestore is not initialized');
+      }
 
       // Create message document using unified API
-      await firestore.collection('messages').add({
+      console.log('[Preview] Creating message document...');
+      const messageDoc = await firestore.collection('messages').add({
         senderId: user.uid,
         recipientId: recipientId,
         mediaURL: downloadURL,
@@ -59,18 +289,42 @@ const PreviewScreen = () => {
         ttlPreset: selectedTtl,
         sentAt: firestore.FieldValue.serverTimestamp(),
       });
-      console.log('[Preview] Message document created.');
+      console.log('[Preview] Message document created with ID:', messageDoc.id);
       
+      // Log analytics
       await logEvent(ANALYTICS_EVENTS.MEDIA_SENT, {
         mediaType,
         ttl: selectedTtl,
         recipientId,
       });
-
+      
+      console.log('[Preview] Message sent successfully, navigating to home');
+      Alert.alert('Success', 'Message sent successfully!');
       router.replace('/(protected)/home');
-    } catch (error) {
-      console.error('[Preview] Error sending message: ', error);
-      // TODO: show an error message to the user
+      
+    } catch (error: any) {
+      console.error('[Preview] Error sending message:', error);
+      console.error('[Preview] Error details:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
+      
+      // Show user-friendly error message
+      let errorMessage = 'Failed to send message. ';
+      if (error.message?.includes('storage')) {
+        errorMessage += 'Storage upload failed.';
+      } else if (error.message?.includes('firestore') || error.message?.includes('permission')) {
+        errorMessage += 'Database error.';
+      } else if (error.message?.includes('network') || error.message?.includes('fetch')) {
+        errorMessage += 'Network error.';
+      } else {
+        errorMessage += error.message || 'Unknown error occurred.';
+      }
+      
+      Alert.alert('Send Failed', errorMessage);
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -79,17 +333,47 @@ const PreviewScreen = () => {
   };
 
   const renderMedia = () => {
+    console.log('[Preview] Rendering media:', { mediaType, uri, platform: Platform.OS });
+    
     if (mediaType === 'photo') {
-      return <Image source={{ uri }} style={styles.image} />;
+      return <Image source={{ uri }} style={styles.image} resizeMode="cover" />;
     } else {
-      // For video, we'd normally use react-native-video
-      // For now, show a placeholder
-      return (
-        <View style={[styles.video, styles.mockMedia]}>
-          <Text style={styles.mockMediaText}>🎥</Text>
-          <Text style={styles.mockMediaSubtext}>Video Preview</Text>
-        </View>
-      );
+      // Handle video based on platform and source
+      if (Platform.OS === 'web' || uri?.startsWith('mock://') || !Video || videoError) {
+        // Mock video for web or fallback
+        return (
+          <View style={[styles.video, styles.mockMedia]}>
+            <Text style={styles.mockMediaText}>🎥</Text>
+            <Text style={styles.mockMediaSubtext}>Video Preview</Text>
+            {videoError && (
+              <Text style={styles.errorText}>Video playback not available</Text>
+            )}
+          </View>
+        );
+      } else {
+        // Real video playback for mobile
+        return (
+          <View style={styles.videoContainer}>
+            <Video
+              source={{ uri }}
+              style={styles.video}
+              controls={true}
+              resizeMode="cover"
+              paused={false}
+              repeat={false}
+              muted={false}
+              onError={(error: any) => {
+                console.error('[Preview] Video playback error:', error);
+                setVideoError(true);
+              }}
+              onLoad={() => {
+                console.log('[Preview] Video loaded successfully');
+                setVideoError(false);
+              }}
+            />
+          </View>
+        );
+      }
     }
   };
 
@@ -122,35 +406,44 @@ const PreviewScreen = () => {
     <View style={styles.fullContainer}>
       <Header title="Send Message" showBackButton={true} />
       <View style={styles.container}>
-      {renderMedia()}
-      
-      <View style={styles.bottomContainer}>
-        <View style={styles.ttlContainer}>
-          {TTL_PRESETS.map((ttl) => (
-            <TouchableOpacity
-              key={ttl}
-              style={[styles.ttlButton, selectedTtl === ttl && styles.ttlButtonSelected]}
-              onPress={() => {
-                setSelectedTtl(ttl);
-                logEvent(ANALYTICS_EVENTS.TTL_SELECTED, { ttl, screen: 'preview' });
-              }}
-            >
-              <Text style={styles.ttlButtonText}>{ttl}</Text>
+        {renderMedia()}
+        
+        <View style={styles.bottomContainer}>
+          <View style={styles.ttlContainer}>
+            {TTL_PRESETS.map((ttl) => (
+              <TouchableOpacity
+                key={ttl}
+                style={[styles.ttlButton, selectedTtl === ttl && styles.ttlButtonSelected]}
+                onPress={() => {
+                  setSelectedTtl(ttl);
+                  logEvent(ANALYTICS_EVENTS.TTL_SELECTED, { ttl, screen: 'preview' });
+                }}
+              >
+                <Text style={[styles.ttlButtonText, selectedTtl === ttl && styles.ttlButtonTextSelected]}>{ttl}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View style={styles.sendContainer}>
+            <TouchableOpacity style={styles.selectFriendButton} onPress={openFriendSelector}>
+              <Text style={styles.selectFriendButtonText}>{recipientName ? `To: ${recipientName}` : 'Select Friend'}</Text>
             </TouchableOpacity>
-          ))}
-        </View>
 
-        <View style={styles.sendContainer}>
-          <TouchableOpacity style={styles.selectFriendButton} onPress={openFriendSelector}>
-            <Text style={styles.selectFriendButtonText}>{recipientName ? `To: ${recipientName}` : 'Select Friend'}</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={[styles.sendButton, !recipientId && styles.sendButtonDisabled]} onPress={handleSend} disabled={!recipientId || readonly === 'true'}>
-            <Text style={styles.sendButtonText}>Send</Text>
-          </TouchableOpacity>
+            <TouchableOpacity 
+              style={[
+                styles.sendButton, 
+                (!recipientId || isSending) && styles.sendButtonDisabled
+              ]} 
+              onPress={handleSend} 
+              disabled={!recipientId || readonly === 'true' || isSending}
+            >
+              <Text style={styles.sendButtonText}>
+                {isSending ? 'Sending...' : 'Send'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
-    </View>
     </View>
   );
 };
@@ -169,9 +462,15 @@ const styles = StyleSheet.create({
     aspectRatio: 1,
     borderRadius: 8,
   },
-  video: {
+  videoContainer: {
     width: '100%',
     aspectRatio: 1,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  video: {
+    width: '100%',
+    height: '100%',
     borderRadius: 8,
     backgroundColor: '#000',
   },
@@ -187,6 +486,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
     marginTop: 8,
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#ff0000',
+    marginTop: 8,
+    textAlign: 'center',
   },
   bottomContainer: {
     marginTop: 20,
@@ -209,6 +514,10 @@ const styles = StyleSheet.create({
   ttlButtonText: {
     fontSize: 14,
     fontWeight: '600',
+    color: '#333',
+  },
+  ttlButtonTextSelected: {
+    color: 'white',
   },
   sendContainer: {
     gap: 12,

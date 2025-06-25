@@ -10,4 +10,5 @@ export interface User {
   email: string | null;
   photoURL: string | null;
   createdAt: FirestoreTimestamp;
+  defaultTtl?: string; // Optional default TTL setting for messages
 } 

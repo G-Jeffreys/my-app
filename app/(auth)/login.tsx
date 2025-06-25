@@ -1,52 +1,52 @@
-import { View, Text, TouchableOpacity, Alert } from "react-native";
+import { View, Text, TouchableOpacity, ActivityIndicator } from "react-native";
 import { useAuth } from "../../store/useAuth";
-import { useRouter } from "expo-router";
-import { useEffect } from "react";
+import * as Google from "expo-auth-session/providers/google";
+import * as WebBrowser from "expo-web-browser";
+import React, { useEffect } from "react";
+import { env } from "../../env";
 
-const Login = () => {
-  const { signInWithGoogle, user, loading } = useAuth();
-  const router = useRouter();
+WebBrowser.maybeCompleteAuthSession();
+
+export default function Login() {
+  const handleGoogleSignIn = useAuth((state) => state.handleGoogleSignIn);
+  const authLoading = useAuth((state) => state.loading);
+
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    iosClientId: env.GOOGLE_IOS_CLIENT_ID,
+    androidClientId: env.GOOGLE_ANDROID_CLIENT_ID,
+    webClientId: env.EXPO_CLIENT_ID,
+  });
 
   useEffect(() => {
-    console.log('[Login] Auth state:', { user: user?.email, loading });
-    if (!loading && user) {
-      console.log('[Login] User is authenticated, redirecting to home');
-      router.replace('/(protected)/home');
+    if (response?.type === "success") {
+      const { id_token } = response.params;
+      handleGoogleSignIn(id_token);
+    } else if (response?.type === "error") {
+      console.error("Google Sign-In Error:", response.error);
+      handleGoogleSignIn(undefined);
     }
-  }, [user, loading]);
+  }, [response]);
 
-  const handleGoogleSignIn = async () => {
-    try {
-      console.log('[Login] Attempting Google sign in');
-      await signInWithGoogle();
-    } catch (error) {
-      console.error('[Login] Google sign in error:', error);
-      Alert.alert(
-        'Login Error',
-        'Failed to sign in with Google. Please try again.'
-      );
-    }
+  const onSignInPress = () => {
+    promptAsync();
   };
-
-  if (loading) {
-    return (
-      <View className="flex-1 items-center justify-center bg-white">
-        <Text>Loading...</Text>
-      </View>
-    );
-  }
 
   return (
     <View className="flex-1 items-center justify-center bg-white">
-      <Text className="text-xl mb-6">Login</Text>
-      <TouchableOpacity 
-        onPress={handleGoogleSignIn} 
-        className="bg-green-500 px-6 py-3 rounded-lg"
-      >
-        <Text className="text-white font-bold text-lg">Sign in with Google</Text>
-      </TouchableOpacity>
+      {authLoading ? (
+        <ActivityIndicator size="large" />
+      ) : (
+        <>
+          <Text className="text-xl mb-6">Login</Text>
+          <TouchableOpacity
+            disabled={!request}
+            onPress={onSignInPress}
+            className="bg-blue-500 px-4 py-3 rounded-lg flex-row items-center"
+          >
+            <Text className="text-white font-semibold">Sign in with Google</Text>
+          </TouchableOpacity>
+        </>
+      )}
     </View>
   );
-};
-
-export default Login;
+}

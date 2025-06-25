@@ -1,185 +1,152 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
-import { firestore, timestampToDate } from '../lib/firebase';
-import { useCountdown } from '../hooks/useCountdown';
-import { Message } from '../models/firestore/message';
-import { Receipt } from '../models/firestore/receipt';
-import { useAuth } from '../store/useAuth';
-import { ANALYTICS_EVENTS, logEvent } from '../lib/analytics';
-import { router } from 'expo-router';
+import React, { useEffect, useState, useRef } from "react";
+import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native";
+import { Video, ResizeMode } from "expo-av";
+import { useAuth } from "../store/useAuth";
+import { useCountdown } from "../hooks/useCountdown";
+import { Message, FirestoreTimestamp } from "../models/firestore/message";
+import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { firestore } from "../lib/firebase";
 
 interface MessageItemProps {
   message: Message;
 }
 
-export default function MessageItem({ message }: MessageItemProps) {
-  const { user } = useAuth();
-  const [receipt, setReceipt] = useState<Receipt | null>(null);
-  const [sender, setSender] = useState<any>(null); // Using any for simplicity for now
-  const [expiredEventLogged, setExpiredEventLogged] = useState(false);
+// Helper to convert FirestoreTimestamp to a JS Date object
+const toDate = (timestamp: FirestoreTimestamp): Date => {
+  if (timestamp instanceof Date) {
+    return timestamp;
+  }
+  return new Date(timestamp.seconds * 1000 + timestamp.nanoseconds / 1000000);
+};
 
+const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
+  const user = useAuth((state) => state.user);
+  const [isOpened, setIsOpened] = useState(false);
+  const [isViewed, setIsViewed] = useState(false);
+  const videoRef = useRef<Video>(null);
+
+  const sentAtDate = message.sentAt ? toDate(message.sentAt) : null;
+  const { remaining, isExpired } = useCountdown(sentAtDate, message.ttlPreset);
+
+  const isSender = message.senderId === user?.uid;
+
+  // This effect handles marking the message as viewed in Firestore
+  // It runs only once when the message is first opened by the recipient
   useEffect(() => {
-    if (!user) {
-      console.log('[MessageItem] No user, skipping receipt setup');
-      return;
+    if (isOpened && !isSender && !isViewed) {
+      setIsViewed(true); // Set local state to prevent re-writes
+      const messageRef = doc(firestore, "messages", message.id);
+      // We are adding a `viewedAt` field here for potential future use,
+      // even though it's not in the Message model. Firestore is flexible.
+      updateDoc(messageRef, { viewedAt: serverTimestamp() });
     }
+  }, [isOpened, isSender, message.id, isViewed]);
 
-    console.log('[MessageItem] Setting up receipt listener for message:', message.id);
-
-    try {
-      // Use unified Firebase API
-      const receiptRef = firestore.collection('messages').doc(message.id).collection('receipts').doc(user.uid);
-      const unsub = receiptRef.onSnapshot((snap) => {
-        console.log('[MessageItem] Receipt snapshot received');
-        if (snap.exists()) {
-          const receiptData = snap.data() as Receipt;
-          setReceipt(receiptData);
-          if (!receiptData.receivedAt) {
-            receiptRef.set({ receivedAt: firestore.FieldValue.serverTimestamp() }, { merge: true });
-          }
-        } else {
-          receiptRef.set({ receivedAt: firestore.FieldValue.serverTimestamp() }, { merge: true });
-        }
-      });
-
-      // Get sender data
-      const senderRef = firestore.collection('users').doc(message.senderId);
-      senderRef.get().then((snap) => {
-        console.log('[MessageItem] Sender data received');
-        if (snap.exists()) {
-          setSender(snap.data());
-        }
-      });
-
-      return () => {
-        console.log('[MessageItem] Cleaning up receipt listener');
-        unsub();
-      };
-    } catch (error) {
-      console.error('[MessageItem] Error setting up receipt listener:', error);
+  const handlePress = () => {
+    if (!isExpired && !isSender) {
+      setIsOpened(true);
     }
-  }, [message.id, message.senderId, user]);
-
-  const receivedAt = receipt?.receivedAt ? timestampToDate(receipt.receivedAt) : null;
-  const { remaining, isExpired } = useCountdown(receivedAt, message.ttlPreset);
-  
-  const isOpened = receipt?.viewedAt;
-
-  useEffect(() => {
-    if (isExpired && !isOpened && !expiredEventLogged) {
-      logEvent(ANALYTICS_EVENTS.MEDIA_EXPIRED_UNOPENED, {
-        mediaType: message.mediaType,
-        senderId: message.senderId,
-        ttl: message.ttlPreset,
-      });
-      setExpiredEventLogged(true);
-    }
-  }, [isExpired, isOpened, expiredEventLogged, message]);
-
-  const handleOpenMessage = () => {
-    if (!user || isOpened) return;
-    
-    console.log('[MessageItem] Opening message:', message.id);
-
-    try {
-      // Use unified Firebase API
-      const receiptRef = firestore.collection('messages').doc(message.id).collection('receipts').doc(user.uid);
-      receiptRef.set({ viewedAt: firestore.FieldValue.serverTimestamp() }, { merge: true });
-    } catch (error) {
-      console.error('[MessageItem] Error updating receipt:', error);
-    }
-
-    logEvent(ANALYTICS_EVENTS.MEDIA_OPENED, {
-      mediaType: message.mediaType,
-      senderId: message.senderId,
-      ttl: message.ttlPreset,
-    });
-
-    // Navigate to a viewer screen (we can reuse preview for now)
-    router.push({
-      pathname: '/(protected)/preview',
-      params: { uri: message.mediaURL, mediaType: message.mediaType, readonly: 'true' },
-    });
   };
+
+  if (isSender) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.statusText}>Sent to a friend</Text>
+      </View>
+    );
+  }
 
   if (isExpired && !isOpened) {
     return (
       <View style={styles.container}>
-        <Text style={styles.missedText}>Missed Snap from {sender?.displayName || 'a friend'}</Text>
+        <Text style={styles.statusText}>Expired</Text>
       </View>
     );
   }
 
   return (
-    <TouchableOpacity style={styles.container} onPress={handleOpenMessage}>
-      <View style={styles.thumbnail}>
-        {(!message.mediaURL || message.mediaURL.startsWith('mock://')) ? (
-          <View style={[styles.image, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0f0f0' }]}> 
-            <Text>🖼️</Text>
-          </View>
-        ) : (
-          <Image 
-            source={{ uri: message.mediaURL }} 
-            style={styles.image} 
-            onError={(e) => console.error('[MessageItem] Thumbnail load error:', e.nativeEvent.error)}
-          />
-        )}
-        {isOpened ? (
-          <Text>Opened</Text>
-        ) : (
-          <View style={styles.timerOverlay}>
+    <TouchableOpacity style={styles.container} onPress={handlePress}>
+      {isOpened ? (
+        <>
+          {message.mediaType === "image" || message.mediaType === 'photo' ? (
+            <Image source={{ uri: message.mediaURL || "" }} style={styles.media} />
+          ) : message.mediaType === 'video' ? (
+            <Video
+              ref={videoRef}
+              source={{ uri: message.mediaURL || "" }}
+              style={styles.media}
+              resizeMode={ResizeMode.COVER}
+              shouldPlay
+              isLooping
+            />
+          ) : (
+            <View style={styles.textContainer}>
+                <Text style={styles.textMessage}>{message.text}</Text>
+            </View>
+          )}
+          <View style={styles.timer}>
             <Text style={styles.timerText}>{remaining}s</Text>
           </View>
-        )}
-      </View>
-      <Text style={styles.senderName}>{sender?.displayName || 'Loading...'}</Text>
+        </>
+      ) : (
+        <View style={styles.placeholder}>
+          <Text style={styles.placeholderText}>
+            {message.mediaType === 'text' ? 'Tap to view message' : 'Tap to view snap'}
+          </Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {
     padding: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee'
+    marginVertical: 5,
+    backgroundColor: "#f0f0f0",
+    borderRadius: 10,
   },
-  thumbnail: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#ccc',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
+  statusText: {
+    fontSize: 16,
+    color: "gray",
   },
-  image: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 25,
+  placeholder: {
+    height: 200,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#e0e0e0",
   },
-  timerOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 25,
+  placeholderText: {
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+  media: {
+    width: "100%",
+    height: 400,
+    borderRadius: 10,
+  },
+  timer: {
+    position: "absolute",
+    top: 15,
+    right: 15,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 15,
   },
   timerText: {
-    color: 'white',
-    fontWeight: 'bold',
+    color: "white",
+    fontWeight: "bold",
   },
-  senderName: {
-    fontSize: 16,
-    fontWeight: 'bold',
+  textContainer: {
+    padding: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 100,
   },
-  missedText: {
-    fontSize: 16,
-    color: '#999',
-  },
-}); 
+  textMessage: {
+    fontSize: 18,
+  }
+});
+
+export default MessageItem;

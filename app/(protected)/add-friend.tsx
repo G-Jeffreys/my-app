@@ -1,141 +1,196 @@
-import { View, Text, TextInput, FlatList, TouchableOpacity, Alert } from 'react-native';
-import { useState } from 'react';
-import { firestore } from '../../lib/firebase';
-import { useAuth } from '../../store/useAuth';
-import { User } from '../../models/firestore/user';
-import Header from '../../components/Header';
-import LoadingSpinner from '../../components/LoadingSpinner';
-import Toast from '../../components/Toast';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+  Image,
+} from "react-native";
+import React, { useState } from "react";
+import { collection, query, where, getDocs, setDoc, doc } from "firebase/firestore";
+import { firestore, auth } from "../../lib/firebase";
+import { User } from "../../models/firestore/user";
+import Header from "../../components/Header";
+import { SafeAreaView } from "react-native-safe-area-context";
 
-const AddFriend = () => {
-  const { user } = useAuth();
-  const [searchEmail, setSearchEmail] = useState('');
+export default function AddFriendScreen() {
+  const [searchEmail, setSearchEmail] = useState("");
   const [searchResults, setSearchResults] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
-  const [toast, setToast] = useState<{message: string; type: 'success' | 'error' | 'info'; visible: boolean}>({
-    message: '',
-    type: 'info',
-    visible: false
-  });
-
-  const showToast = (message: string, type: 'success' | 'error' | 'info') => {
-    setToast({ message, type, visible: true });
-  };
+  const [requesting, setRequesting] = useState<Record<string, boolean>>({});
 
   const handleSearch = async () => {
-    if (!searchEmail.trim()) {
-      showToast('Please enter an email to search.', 'error');
+    if (searchEmail.trim() === "") {
+      Alert.alert("Error", "Please enter an email to search.");
       return;
     }
     setLoading(true);
+    setSearchResults([]);
     try {
-      console.log('[AddFriend] Searching for users with email:', searchEmail);
-      
-      // Use unified Firebase API
-      const usersRef = firestore.collection('users');
-      const q = usersRef.where('email', '==', searchEmail.toLowerCase());
-      const querySnapshot = await q.get();
-      
-      const users: User[] = [];
-      querySnapshot.forEach((doc) => {
-        const userData = doc.data();
-        if (userData.id !== user?.uid) {
-          users.push({ id: doc.id, ...userData } as User);
-        }
-      });
-      
-      console.log('[AddFriend] Found users:', users);
-      setSearchResults(users);
-      
-      if (users.length === 0) {
-        showToast('No user found with that email.', 'info');
-      } else {
-        showToast(`Found ${users.length} user${users.length > 1 ? 's' : ''}!`, 'success');
+      const q = query(
+        collection(firestore, "users"),
+        where("email", "==", searchEmail.toLowerCase())
+      );
+      const querySnapshot = await getDocs(q);
+      const users: User[] = querySnapshot.docs.map(
+        (doc) => ({ id: doc.id, ...doc.data() } as User)
+      );
+      // Filter out the current user from search results
+      const filteredUsers = users.filter(user => user.id !== auth.currentUser?.uid);
+      setSearchResults(filteredUsers);
+      if (filteredUsers.length === 0) {
+        Alert.alert("No Results", "No user found with that email.");
       }
     } catch (error) {
-      console.error('[AddFriend] Error searching for users:', error);
-      showToast('An error occurred while searching for users.', 'error');
+      console.error("Error searching for user:", error);
+      Alert.alert("Error", "An error occurred while searching.");
     } finally {
       setLoading(false);
     }
   };
 
-  const sendFriendRequest = async (recipientId: string) => {
-    if (!user) return;
+  const sendFriendRequest = async (recipient: User) => {
+    if (!auth.currentUser) return;
+    setRequesting((prev) => ({ ...prev, [recipient.id]: true }));
     try {
-      console.log('[AddFriend] Sending friend request to:', recipientId);
-      
-      // Use unified Firebase API
-      const requestsRef = firestore.collection('friendRequests');
-      await requestsRef.add({
-        senderId: user.uid,
-        recipientId,
-        status: 'pending',
-        createdAt: firestore.FieldValue.serverTimestamp(),
+      const requestRef = doc(
+        firestore,
+        "friendRequests",
+        `${auth.currentUser.uid}_${recipient.id}`
+      );
+      await setDoc(requestRef, {
+        senderId: auth.currentUser.uid,
+        recipientId: recipient.id,
+        senderEmail: auth.currentUser.email,
+        status: "pending",
+        createdAt: new Date(),
       });
-      
-      console.log('[AddFriend] Friend request sent successfully');
-      showToast('Friend request sent successfully! 🎉', 'success');
+      Alert.alert("Success", `Friend request sent to ${recipient.displayName}!`);
     } catch (error) {
-      console.error('[AddFriend] Error sending friend request:', error);
-      showToast('Could not send friend request. Please try again.', 'error');
+      console.error("Error sending friend request:", error);
+      Alert.alert("Error", "Failed to send friend request.");
+    } finally {
+      setRequesting((prev) => ({ ...prev, [recipient.id]: false }));
     }
   };
 
-  return (
-    <View className="flex-1 bg-white">
-      <Header title="Add Friend" showBackButton={true} />
-      
-      <View className="flex-1 p-4">
-      <TextInput
-        className="border border-gray-300 p-3 rounded-lg mb-4"
-        placeholder="Search by email"
-        value={searchEmail}
-        onChangeText={setSearchEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-      />
-              <TouchableOpacity 
-          onPress={handleSearch} 
-          disabled={loading} 
-          className={`${loading ? 'bg-gray-400' : 'bg-blue-500'} p-3 rounded-lg items-center`}
-        >
-          <Text className="text-white font-bold">{loading ? 'Searching...' : 'Search'}</Text>
-        </TouchableOpacity>
-
-        {loading && <LoadingSpinner text="Searching for users..." overlay={false} />}
-        
-        {!loading && searchResults.length === 0 && searchEmail.trim() !== '' && (
-          <View className="p-4 mt-4 bg-gray-50 rounded-lg">
-            <Text className="text-center text-gray-500">🔍 No users found with that email.</Text>
-            <Text className="text-center text-gray-400 text-sm mt-1">
-              Make sure they've signed up for the app!
-            </Text>
-          </View>
-        )}
-
-        <FlatList
-          data={searchResults}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <View className="flex-row items-center justify-between p-4 mt-4 border border-gray-200 rounded-lg">
-              <Text className="font-semibold">{item.displayName}</Text>
-              <TouchableOpacity onPress={() => sendFriendRequest(item.id)} className="bg-green-500 px-4 py-2 rounded-lg">
-                <Text className="text-white">Add</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        />
-        
-        <Toast
-          message={toast.message}
-          type={toast.type}
-          visible={toast.visible}
-          onDismiss={() => setToast(prev => ({ ...prev, visible: false }))}
-        />
+  const renderUser = ({ item }: { item: User }) => (
+    <View style={styles.userRow}>
+      <Image source={{ uri: item.photoURL || "" }} style={styles.avatar} />
+      <View style={styles.userInfo}>
+        <Text style={styles.userName}>{item.displayName}</Text>
+        <Text style={styles.userEmail}>{item.email}</Text>
       </View>
+      <TouchableOpacity
+        style={styles.addButton}
+        onPress={() => sendFriendRequest(item)}
+        disabled={requesting[item.id]}
+      >
+        {requesting[item.id] ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.addButtonText}>Add</Text>
+        )}
+      </TouchableOpacity>
     </View>
   );
-};
 
-export default AddFriend; 
+  return (
+    <SafeAreaView style={styles.container}>
+      <Header title="Add Friend" showBackButton />
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.input}
+          placeholder="Enter friend's email"
+          value={searchEmail}
+          onChangeText={setSearchEmail}
+          autoCapitalize="none"
+          keyboardType="email-address"
+        />
+        <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
+          <Text style={styles.searchButtonText}>Search</Text>
+        </TouchableOpacity>
+      </View>
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: 20 }} />
+      ) : (
+        <FlatList
+          data={searchResults}
+          renderItem={renderUser}
+          keyExtractor={(item) => item.id}
+          ListEmptyComponent={
+            <Text style={styles.emptyText}>Search for a user to add them as a friend.</Text>
+          }
+        />
+      )}
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+    container: { flex: 1, backgroundColor: "white" },
+    searchContainer: {
+      flexDirection: "row",
+      padding: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: "#eee",
+    },
+    input: {
+      flex: 1,
+      borderWidth: 1,
+      borderColor: "#ddd",
+      padding: 10,
+      borderRadius: 8,
+      marginRight: 10,
+    },
+    searchButton: {
+      backgroundColor: "#007AFF",
+      padding: 10,
+      borderRadius: 8,
+      justifyContent: "center",
+    },
+    searchButtonText: {
+      color: "white",
+      fontWeight: "bold",
+    },
+    userRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      padding: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: "#eee",
+    },
+    avatar: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        marginRight: 10,
+    },
+    userInfo: {
+        flex: 1,
+    },
+    userName: {
+        fontWeight: 'bold'
+    },
+    userEmail: {
+        color: 'gray'
+    },
+    addButton: {
+        backgroundColor: 'green',
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: 5,
+    },
+    addButtonText: {
+        color: 'white',
+        fontWeight: 'bold',
+    },
+    emptyText: {
+        textAlign: 'center',
+        marginTop: 20,
+        color: 'gray',
+    }
+}); 

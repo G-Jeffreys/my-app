@@ -1,100 +1,111 @@
-import { View, Text, TouchableOpacity, FlatList } from "react-native";
-import { useAuth } from "../../store/useAuth";
-import { Link } from "expo-router";
-import { useEffect, useState, useRef } from "react";
-import { firestore } from "../../lib/firebase";
+import React, { useEffect, useState } from "react";
+import { View, Text, FlatList, StyleSheet, TouchableOpacity } from "react-native";
+import { collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
+import { firestore, auth } from "../../lib/firebase";
 import { Message } from "../../models/firestore/message";
 import MessageItem from "../../components/MessageItem";
-import { ANALYTICS_EVENTS, logEvent } from "../../lib/analytics";
+import { useRouter } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Header from "../../components/Header";
 
-const Home = () => {
-  const { signOut, user } = useAuth();
+export default function HomeScreen() {
+  const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
-  const loggedReceivedRef = useRef<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
 
-  // Persistent Firestore listener – cleans up on component unmount only
   useEffect(() => {
-    if (!user) {
-      console.log('[Home] No user, skipping message loading');
-      return;
-    }
+    if (!auth.currentUser) return;
 
-    console.log('[Home] Setting up message listener for user:', user.uid);
+    const q = query(
+      collection(firestore, "messages"),
+      where("recipientId", "==", auth.currentUser.uid),
+      orderBy("createdAt", "desc")
+    );
 
-    const q = firestore.collection('messages').where('recipientId', '==', user.uid);
-
-    const unsubscribe = q.onSnapshot((snapshot) => {
-      console.log('[Home] Received', snapshot.docs.length, 'messages');
-      const newMessages: Message[] = [];
-      snapshot.forEach((doc) => {
-        const message = { id: doc.id, ...doc.data() } as Message;
-        newMessages.push(message);
-
-        if (!loggedReceivedRef.current.has(message.id)) {
-          loggedReceivedRef.current.add(message.id);
-          logEvent(ANALYTICS_EVENTS.MEDIA_RECEIVED, {
-            mediaType: message.mediaType,
-            senderId: message.senderId,
-          });
-        }
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const fetchedMessages: Message[] = [];
+      querySnapshot.forEach((doc) => {
+        fetchedMessages.push({ id: doc.id, ...doc.data() } as Message);
       });
-      setMessages(newMessages);
+      setMessages(fetchedMessages);
+      setLoading(false);
+    }, (error) => {
+      console.error("Error fetching messages: ", error);
+      setLoading(false);
     });
 
-    return () => {
-      console.log('[Home] Cleaning up message listener on unmount');
-      unsubscribe();
-    };
-  }, [user?.uid]);
+    return () => unsubscribe();
+  }, [auth.currentUser]);
 
   return (
-    <View className="flex-1 bg-white">
-      <Header 
-        title={`Welcome, ${user?.displayName || 'User'}!`} 
-        showBackButton={false}
-        rightComponent={
-          <TouchableOpacity onPress={signOut} className="bg-red-500 px-3 py-2 rounded-lg">
-            <Text className="text-white font-bold text-sm">Logout</Text>
-          </TouchableOpacity>
-        }
-      />
-      
-      <View className="flex-row justify-around items-center p-4 border-b border-gray-200">
-        <Link href="/(protected)/friends" asChild>
-          <TouchableOpacity className="flex-1 items-center">
-            <Text className="text-blue-500 text-lg font-semibold">👥 Friends</Text>
-          </TouchableOpacity>
-        </Link>
-        <Link href="/(protected)/camera" asChild>
-          <TouchableOpacity className="flex-1 items-center">
-            <Text className="text-green-500 text-lg font-semibold">📷 Camera</Text>
-          </TouchableOpacity>
-        </Link>
-        <Link href="/(protected)/settings" asChild>
-          <TouchableOpacity className="flex-1 items-center">
-            <Text className="text-gray-500 text-lg font-semibold">⚙️ Settings</Text>
-          </TouchableOpacity>
-        </Link>
-      </View>
-      
-      <FlatList
-        data={messages}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <MessageItem message={item} />}
-        ListHeaderComponent={() => (
-          <View className="p-4 items-center">
-            <Text className="text-xl font-semibold mb-2">Your Messages 📬</Text>
-            {messages.length === 0 && (
-              <Text className="text-gray-500 text-center mt-8">
-                No messages yet! Take a snap with the camera and send it to friends! 📸
-              </Text>
-            )}
-          </View>
-        )}
-      />
-    </View>
+    <SafeAreaView style={styles.container}>
+      <Header title="Inbox" />
+      {loading ? (
+        <View style={styles.centered}>
+          <Text>Loading messages...</Text>
+        </View>
+      ) : messages.length === 0 ? (
+        <View style={styles.centered}>
+          <Text style={styles.emptyText}>Your inbox is empty.</Text>
+          <Text style={styles.emptySubtext}>Messages you receive will appear here.</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={messages}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => <MessageItem message={item} />}
+          contentContainerStyle={styles.list}
+        />
+      )}
+      <TouchableOpacity
+        style={styles.cameraButton}
+        onPress={() => router.push("/(protected)/camera")}
+      >
+        <Text style={styles.cameraButtonText}>📷</Text>
+      </TouchableOpacity>
+    </SafeAreaView>
   );
-};
+}
 
-export default Home;
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#fff",
+  },
+  centered: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: "600",
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: "gray",
+    marginTop: 8,
+  },
+  list: {
+    padding: 10,
+  },
+  cameraButton: {
+    position: "absolute",
+    bottom: 40,
+    right: 30,
+    backgroundColor: "#007AFF",
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: "center",
+    alignItems: "center",
+    elevation: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  cameraButtonText: {
+    fontSize: 28,
+  },
+});

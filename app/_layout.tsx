@@ -5,25 +5,12 @@ import { ActivityIndicator, View } from "react-native";
 import { usePresence } from "../store/usePresence";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useEffect } from 'react';
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
-import { env } from '../env';
-
-// Configure Google Sign-In
-GoogleSignin.configure({
-  webClientId: '435345795137-eglsicllj19cur60udu62gnc97d8hh31.apps.googleusercontent.com', // From google-services.json
-  iosClientId: env.GOOGLE_IOS_CLIENT_ID, // From GoogleService-Info.plist
-});
 
 export default function RootLayout() {
-  const { loading, user, initializeAuth } = useAuth();
+  const { user, loading, initialize } = useAuth();
   const router = useRouter();
   const segments = useSegments();
   usePresence(); // Initialize presence hook
-
-  useEffect(() => {
-    // Initialize auth when the app starts
-    initializeAuth();
-  }, []);
 
   useEffect(() => {
     console.log('[Navigation] Current segments:', segments);
@@ -39,6 +26,11 @@ export default function RootLayout() {
       router.replace('/(protected)/home');
     }
   }, [user, loading, segments]);
+
+  useEffect(() => {
+    const unsubscribe = initialize();
+    return () => unsubscribe();
+  }, [initialize]);
 
   if (loading) {
     return (

@@ -58,6 +58,18 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
     }
   }, [isOpened, isSender, receipt, markAsViewed, message.id]);
 
+  // Hide expired messages immediately for better UX (server cleanup runs hourly)
+  useEffect(() => {
+    if (isExpired && !isSender) {
+      logMessage('Message expired - hiding from UI', { 
+        messageId: message.id, 
+        remaining,
+        ttl: message.ttlPreset,
+        receivedAt: receivedAt?.toISOString()
+      });
+    }
+  }, [isExpired, isSender, message.id, remaining, message.ttlPreset, receivedAt]);
+
   const handlePress = () => {
     if (!isExpired && !isSender) {
       logMessage('Opening message', { messageId: message.id, remaining });

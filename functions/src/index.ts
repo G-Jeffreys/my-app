@@ -12,6 +12,7 @@ import * as logger from "firebase-functions/logger";
 import {onDocumentUpdated} from "firebase-functions/v2/firestore";
 import * as admin from "firebase-admin";
 import {onSchedule} from "firebase-functions/v2/scheduler";
+import {onRequest} from "firebase-functions/v2/https";
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
@@ -94,8 +95,8 @@ export const acceptFriendRequest = onDocumentUpdated(
     }
   });
 
-// T9 - Updated Cleanup Pipeline: Use receivedAt + TTL for proper timing
-export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
+// Helper function for TTL-based cleanup logic
+const performCleanup = async () => {
   logger.info("🧹 Running TTL-based cleanup for expired messages...");
 
   const now = admin.firestore.Timestamp.now();
@@ -131,7 +132,7 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
 
     if (messagesSnapshot.empty) {
       logger.info("📭 No messages to process.");
-      return;
+      return {messagesProcessed, messagesDeleted, mediaFilesDeleted, errors};
     }
 
     logger.info(`📊 Processing ${messagesSnapshot.size} messages for cleanup...`);
@@ -281,7 +282,7 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
       logger.info("✅ Cleanup batch committed successfully");
     }
 
-    // Emit cleanup success metric (T9 requirement)
+    // Return cleanup stats
     const cleanupStats = {
       messagesProcessed,
       messagesDeleted,
@@ -297,6 +298,8 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
       structuredData: true,
       ...cleanupStats,
     });
+
+    return cleanupStats;
   } catch (error) {
     logger.error("❌ Batch commit failed during cleanup.", {error});
 
@@ -306,6 +309,36 @@ export const cleanupExpiredMessages = onSchedule("every 1 hours", async () => {
       error: error?.toString(),
       messagesProcessed,
       timestamp: now.toDate().toISOString(),
+    });
+
+    throw error;
+  }
+};
+
+// T9 - Updated Cleanup Pipeline: Use receivedAt + TTL for proper timing
+export const cleanupExpiredMessages = onSchedule("every 10 minutes", async () => {
+  await performCleanup();
+});
+
+// Manual cleanup function for testing - can be called via HTTP
+export const manualCleanup = onRequest(async (request, response) => {
+  logger.info("🧪 Manual cleanup triggered via HTTP request");
+  
+  try {
+    const stats = await performCleanup();
+    
+    response.status(200).json({
+      success: true,
+      message: "Manual cleanup completed successfully",
+      stats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error("❌ Manual cleanup failed", error);
+    response.status(500).json({
+      success: false,
+      error: error?.toString(),
+      timestamp: new Date().toISOString()
     });
   }
 });

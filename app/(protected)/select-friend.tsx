@@ -26,6 +26,8 @@ import { Conversation } from "../../models/firestore/conversation";
 import Header from "../../components/Header";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Friend } from "../../models/firestore/friend";
+import { DEFAULT_TTL_PRESET, TtlPreset, isValidTtlPreset } from '../../config/messaging';
+import { useAuth } from '../../store/useAuth';
 
 // Console log function for debugging message sending
 const logSending = (message: string, data?: any) => {
@@ -42,17 +44,69 @@ interface RecipientOption {
 
 export default function SelectFriendScreen() {
   const router = useRouter();
-  const { uri, type } = useLocalSearchParams<{
-    uri: string;
-    type: "image" | "video";
+  const { user } = useAuth();
+  const { uri, type, selectedTtl, text } = useLocalSearchParams<{
+    uri?: string;
+    type?: "image" | "video" | "text";
+    selectedTtl: string;
+    text?: string;
   }>();
   const [recipients, setRecipients] = useState<RecipientOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [selectedRecipientId, setSelectedRecipientId] = useState<string | null>(null);
 
+  // Validate and set TTL with proper fallback
+  const ttlToUse = selectedTtl && isValidTtlPreset(selectedTtl) 
+    ? selectedTtl as TtlPreset 
+    : (user?.defaultTtl || DEFAULT_TTL_PRESET);
+
+  // Determine message type
+  const isTextMessage = type === 'text' || (text && !uri);
+  const isMediaMessage = !!uri && type && ['image', 'video'].includes(type);
+
+  console.log('[SelectFriendScreen] Component rendered', {
+    hasUri: !!uri,
+    hasText: !!text,
+    mediaType: type,
+    selectedTtl,
+    ttlToUse,
+    hasTtlParam: !!selectedTtl,
+    isValidTtl: selectedTtl ? isValidTtlPreset(selectedTtl) : false,
+    userDefaultTtl: user?.defaultTtl,
+    isTextMessage,
+    isMediaMessage,
+    messageContent: isTextMessage ? text?.substring(0, 50) + '...' : 'media'
+  });
+
   useEffect(() => {
-    const fetchRecipientsAndGroups = async () => {
+    // Validate required parameters
+    if (!isTextMessage && !isMediaMessage) {
+      console.error('[SelectFriendScreen] Missing required params:', { uri, type, text, selectedTtl });
+      Alert.alert('Error', 'Missing message content. Please go back and try again.');
+      router.back();
+      return;
+    }
+
+    if (isTextMessage && (!text || text.trim().length === 0)) {
+      console.error('[SelectFriendScreen] Empty text message');
+      Alert.alert('Error', 'Text message cannot be empty. Please go back and add content.');
+      router.back();
+      return;
+    }
+
+    console.log('[SelectFriendScreen] Validation passed', { 
+      isTextMessage, 
+      isMediaMessage,
+      hasValidContent: isTextMessage ? !!text?.trim() : !!uri
+    });
+
+    fetchRecipients();
+  }, []);
+
+  const fetchRecipients = async () => {
+    try {
+      console.log('[SelectFriendScreen] Fetching recipients...');
       if (!auth.currentUser) return;
       setLoading(true);
       
@@ -126,13 +180,14 @@ export default function SelectFriendScreen() {
       } finally {
         setLoading(false);
       }
-    };
-    
-    fetchRecipientsAndGroups();
-  }, []);
+    } catch (error) {
+      console.error("Failed to fetch recipients:", error);
+      Alert.alert("Error", "Failed to load recipients. Please try again later.");
+    }
+  };
 
   const handleSend = async (recipient: RecipientOption) => {
-    if (!uri || !type || !auth.currentUser) {
+    if (!auth.currentUser || (!isTextMessage && (!uri || !type)) || (isTextMessage && !text?.trim())) {
       Alert.alert("Error", "Missing information to send message.");
       return;
     }
@@ -140,35 +195,56 @@ export default function SelectFriendScreen() {
     setSelectedRecipientId(recipient.id);
     setIsSending(true);
 
-    logSending('Sending media message', {
+    logSending('Sending message', {
       recipientId: recipient.id,
       recipientName: recipient.name,
       recipientType: recipient.type,
-      mediaType: type,
-      hasUri: !!uri
+      messageType: isTextMessage ? 'text' : type,
+      hasUri: !!uri,
+      hasText: !!text,
+      selectedTtl,
+      ttlToUse,
+      willUseTtl: ttlToUse
     });
 
     try {
-      // 1. Upload media
-      logSending('Uploading media to Firebase Storage...');
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      const storageRef = ref(
-        storage,
-        `media/${auth.currentUser.uid}/${Date.now()}`
-      );
-      await uploadBytes(storageRef, blob);
-      const downloadURL = await getDownloadURL(storageRef);
-      logSending('✅ Media uploaded successfully', { downloadURL });
+      let downloadURL = null;
 
-      // 2. Create message document
+      // Step 1: Upload media if this is a media message
+      if (isMediaMessage && uri) {
+        console.log('[SelectFriendScreen] Uploading media file...');
+        const response = await fetch(uri);
+        const blob = await response.blob();
+        const filename = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        const storageRef = ref(storage, `messages/${filename}`);
+        await uploadBytes(storageRef, blob);
+        downloadURL = await getDownloadURL(storageRef);
+        console.log('[SelectFriendScreen] Media upload completed:', { downloadURL });
+      }
+
+      // Step 2: Create message document
+      console.log('[SelectFriendScreen] Creating message with TTL:', {
+        ttlToUse,
+        selectedTtl,
+        messageWillHaveTtl: ttlToUse,
+        messageType: isTextMessage ? 'text' : 'media'
+      });
+      
       const messageData = {
         senderId: auth.currentUser.uid,
-        mediaURL: downloadURL,
-        mediaType: type,
         sentAt: serverTimestamp(),
-        ttlPreset: '24h', // TODO: Use user's default TTL
-        text: null,
+        ttlPreset: ttlToUse,
+        
+        // Add message content based on type
+        ...(isTextMessage ? { 
+          text: text?.trim(), 
+          mediaURL: null,
+          mediaType: "text" 
+        } : { 
+          text: null,
+          mediaURL: downloadURL,
+          mediaType: type 
+        }),
         
         // Add recipient info based on type
         ...(recipient.type === 'friend' ? { recipientId: recipient.id } : {}),
@@ -180,8 +256,12 @@ export default function SelectFriendScreen() {
         ephemeralOnly: false,
       };
 
-      const messageRef = await addDoc(collection(firestore, "messages"), messageData);
-      logSending('✅ Message document created', { messageId: messageRef.id });
+      const messageRef = await addDoc(collection(firestore, 'messages'), messageData);
+      console.log('[SelectFriendScreen] Message created successfully:', { 
+        messageId: messageRef.id,
+        messageType: isTextMessage ? 'text' : 'media',
+        content: isTextMessage ? text?.substring(0, 50) + '...' : 'media file'
+      });
 
       // 3. Create receipts based on recipient type
       if (recipient.type === 'friend') {
@@ -190,16 +270,25 @@ export default function SelectFriendScreen() {
         await createGroupReceipts(messageRef.id, recipient.id, auth.currentUser.uid);
       }
 
-      Alert.alert("Success", `Message sent to ${recipient.name}!`);
-      router.replace("/(protected)/home");
+      // Success! Navigate back immediately with console feedback
+      console.log(`✅ Message sent successfully to ${recipient.name}`, {
+        messageType: isTextMessage ? 'text' : type,
+        recipient: recipient.name,
+        recipientType: recipient.type,
+        ttl: ttlToUse,
+        messageId: messageRef.id
+      });
       
+      // Navigate back to home immediately
+      router.replace("/(protected)/home");
     } catch (error) {
-      console.error("Failed to send media:", error);
-      logSending('❌ Error sending message', error);
-      Alert.alert("Error", "Failed to send your message. Please try again.");
+      console.error('Failed to send message:', error);
+      Alert.alert(
+        "Error",
+        `Failed to send ${isTextMessage ? 'text message' : type}. Please try again.`
+      );
     } finally {
       setIsSending(false);
-      setSelectedRecipientId(null);
     }
   };
 
@@ -297,28 +386,61 @@ export default function SelectFriendScreen() {
     </TouchableOpacity>
   );
 
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Header title="Select Recipient" showBackButton />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading contacts...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
-      <Header title="Send To..." showBackButton />
-      {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#2196f3" />
-          <Text style={styles.loadingText}>Loading recipients...</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={recipients}
-          renderItem={renderRecipient}
-          keyExtractor={(item) => `${item.type}-${item.id}`}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>No friends or groups to send to.</Text>
-              <Text style={styles.emptySubtext}>Add friends or create a group to get started!</Text>
-            </View>
-          }
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
-        />
-      )}
+      <Header 
+        title={`Send ${isTextMessage ? 'Message' : type === 'image' ? 'Photo' : 'Video'}`} 
+        showBackButton 
+      />
+      
+      {/* Message Preview */}
+      <View style={styles.messagePreview}>
+        {isTextMessage ? (
+          <View style={styles.textPreview}>
+            <Text style={styles.previewLabel}>Your Message:</Text>
+            <Text style={styles.textContent} numberOfLines={3}>
+              {text}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.mediaPreview}>
+            <Text style={styles.previewLabel}>Your {type}:</Text>
+            {type === "image" ? (
+              <Image source={{ uri }} style={styles.previewImage} />
+            ) : (
+              <View style={styles.videoPreview}>
+                <Text style={styles.videoText}>📹 Video Ready</Text>
+              </View>
+            )}
+          </View>
+        )}
+        <Text style={styles.ttlInfo}>Expires: {ttlToUse}</Text>
+      </View>
+      
+      <FlatList
+        data={recipients}
+        renderItem={renderRecipient}
+        keyExtractor={(item) => `${item.type}-${item.id}`}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>No friends or groups to send to.</Text>
+            <Text style={styles.emptySubtext}>Add friends or create a group to get started!</Text>
+          </View>
+        }
+        ItemSeparatorComponent={() => <View style={styles.separator} />}
+      />
     </SafeAreaView>
   );
 }
@@ -404,5 +526,57 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     textAlign: 'center',
+  },
+  messagePreview: {
+    padding: 16,
+    backgroundColor: '#f8f9fa',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  textPreview: {
+    marginBottom: 12,
+  },
+  previewLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  textContent: {
+    fontSize: 16,
+    color: '#1f2937',
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  mediaPreview: {
+    marginBottom: 12,
+  },
+  previewImage: {
+    width: '100%',
+    height: 150,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  videoPreview: {
+    width: '100%',
+    height: 150,
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  videoText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  ttlInfo: {
+    fontSize: 14,
+    color: '#6b7280',
+    fontWeight: '500',
   },
 }); 

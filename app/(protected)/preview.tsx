@@ -106,7 +106,7 @@ export default function PreviewScreen() {
     });
     router.push({
       pathname: "/(protected)/select-friend",
-      params: { uri, type },
+      params: { uri, type, selectedTtl },
     });
   };
 

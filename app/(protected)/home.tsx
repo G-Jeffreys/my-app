@@ -159,6 +159,11 @@ export default function HomeScreen() {
     router.push("/(protected)/camera");
   };
 
+  const handleNavigateToTextCompose = () => {
+    console.log('[HomeScreen] Navigating to text compose page');
+    router.push("/(protected)/compose-text");
+  };
+
   // Navigation buttons for the header
   const rightComponent = (
     <View style={styles.headerActions}>
@@ -248,15 +253,28 @@ export default function HomeScreen() {
         />
       )}
       
-      {/* Camera Button - Floating Action Button */}
-      <TouchableOpacity
-        style={styles.cameraButton}
-        onPress={handleNavigateToCamera}
-        accessibilityLabel="Open camera to take photo or video"
-        accessibilityRole="button"
-      >
-        <Text style={styles.cameraButtonText}>📷</Text>
-      </TouchableOpacity>
+      {/* Floating Action Buttons */}
+      <View style={styles.floatingButtons}>
+        {/* Text Message Button */}
+        <TouchableOpacity
+          style={[styles.floatingButton, styles.messageButton]}
+          onPress={handleNavigateToTextCompose}
+          accessibilityLabel="Compose text message"
+          accessibilityRole="button"
+        >
+          <Text style={styles.floatingButtonText}>💬</Text>
+        </TouchableOpacity>
+        
+        {/* Camera Button */}
+        <TouchableOpacity
+          style={[styles.floatingButton, styles.cameraButton]}
+          onPress={handleNavigateToCamera}
+          accessibilityLabel="Open camera to take photo or video"
+          accessibilityRole="button"
+        >
+          <Text style={styles.floatingButtonText}>📷</Text>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
@@ -359,11 +377,16 @@ const styles = StyleSheet.create({
   list: {
     padding: 16,
   },
-  cameraButton: {
+  floatingButtons: {
     position: "absolute",
     bottom: 30,
-    right: 20,
-    backgroundColor: "#007AFF",
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    justifyContent: "space-around",
+    paddingHorizontal: 40,
+  },
+  floatingButton: {
     width: 64,
     height: 64,
     borderRadius: 32,
@@ -375,7 +398,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
   },
-  cameraButtonText: {
+  messageButton: {
+    backgroundColor: "#34d399",
+  },
+  cameraButton: {
+    backgroundColor: "#007AFF",
+  },
+  floatingButtonText: {
     fontSize: 32,
   },
 });

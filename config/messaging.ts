@@ -39,7 +39,7 @@ export const ttlPresetToSeconds = (preset: TtlPreset): number => {
 // Group chat configuration
 export const GROUP_CHAT_LIMITS = {
   MAX_PARTICIPANTS: 5, // Maximum number of people in a group chat
-  MIN_PARTICIPANTS: 2, // Minimum number (excluding creator)
+  MIN_PARTICIPANTS: 1, // Minimum number (excluding creator) - so 2 total people
   MAX_NAME_LENGTH: 50, // Maximum characters in group name
 } as const;
 

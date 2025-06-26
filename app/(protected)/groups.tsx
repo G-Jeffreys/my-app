@@ -143,10 +143,10 @@ export default function GroupsScreen() {
   }, [user]);
 
   const handleGroupPress = (group: GroupInfo) => {
-    console.log('[GroupsScreen] Opening group chat:', group.id);
+    console.log('[GroupsScreen] Opening group conversation:', group.id);
     
     router.push({
-      pathname: '/(protected)/compose-text',
+      pathname: '/(protected)/group-conversation/[conversationId]',
       params: { conversationId: group.id }
     });
   };

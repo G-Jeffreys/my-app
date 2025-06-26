@@ -4,15 +4,25 @@ import { collection, query, where, onSnapshot, orderBy, getDocs } from "firebase
 import { firestore } from "../../lib/firebase";
 import { useAuth } from "../../store/useAuth";
 import { Message } from "../../models/firestore/message";
+import { Conversation } from "../../models/firestore/conversation";
 import MessageItem from "../../components/MessageItem";
+import GroupConversationItem from "../../components/GroupConversationItem";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Header from "../../components/Header";
 
+// Combined item type for the unified feed
+type FeedItem = {
+  id: string;
+  type: 'message' | 'conversation';
+  data: Message | Conversation;
+  timestamp: Date;
+};
+
 export default function HomeScreen() {
   const router = useRouter();
   const { user } = useAuth();
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   console.log('[HomeScreen] Component rendered with user:', user?.email);
@@ -25,117 +35,141 @@ export default function HomeScreen() {
 
     console.log('[HomeScreen] Setting up messages listener for user:', user.uid);
 
-    // Enhanced query to fetch both individual and group messages
-    // Individual messages: where recipientId == user.uid
-    // Group messages: where conversationId exists and user is participant
-    
-    // We need to fetch conversations first to get group message IDs
-    const fetchMessages = async () => {
+    // Enhanced query to fetch both individual messages and group conversations
+    const fetchFeedData = async () => {
       try {
-        // 1. Get conversations where user is a participant
+        console.log('[HomeScreen] Setting up unified feed listeners');
+
+        const unsubscribes: (() => void)[] = [];
+        const allFeedItems = new Map<string, FeedItem>();
+
+        const updateFeed = () => {
+          const sortedItems = Array.from(allFeedItems.values()).sort((a, b) => {
+            return b.timestamp.getTime() - a.timestamp.getTime(); // Descending order (newest first)
+          });
+          
+          console.log('[HomeScreen] Feed updated:', sortedItems.length, 'items');
+          setFeedItems(sortedItems);
+          setLoading(false);
+        };
+
+        // 1. Listen to conversations where user is a participant
         const conversationsQuery = query(
           collection(firestore, "conversations"),
-          where("participantIds", "array-contains", user.uid)
+          where("participantIds", "array-contains", user.uid),
+          orderBy("lastMessageAt", "desc")
         );
-        
-        const conversationSnapshot = await getDocs(conversationsQuery);
-        const userConversationIds = conversationSnapshot.docs.map(doc => doc.id);
-        
-        console.log('[HomeScreen] User conversations found:', userConversationIds.length);
 
-        // 2. Set up real-time listener for all messages
-        const messageQueries = [];
-        
-        // Individual messages query
-        const individualQuery = query(
+        const conversationsUnsubscribe = onSnapshot(
+          conversationsQuery,
+          (snapshot) => {
+            console.log('[HomeScreen] Conversations updated:', snapshot.size);
+            
+            // Remove old conversations
+            snapshot.docChanges().forEach((change) => {
+              if (change.type === 'removed') {
+                allFeedItems.delete(`conversation-${change.doc.id}`);
+              }
+            });
+
+            // Add/update conversations
+            snapshot.forEach((doc) => {
+              const conversationData = { id: doc.id, ...doc.data() } as Conversation;
+              const timestamp = conversationData.lastMessageAt 
+                ? (conversationData.lastMessageAt instanceof Date 
+                   ? conversationData.lastMessageAt 
+                   : new Date((conversationData.lastMessageAt as any)?.seconds * 1000))
+                : conversationData.createdAt instanceof Date 
+                  ? conversationData.createdAt 
+                  : new Date((conversationData.createdAt as any)?.seconds * 1000);
+
+              allFeedItems.set(`conversation-${doc.id}`, {
+                id: `conversation-${doc.id}`,
+                type: 'conversation',
+                data: conversationData,
+                timestamp,
+              });
+            });
+
+            updateFeed();
+          },
+          (error) => {
+            console.error('[HomeScreen] Error in conversations query:', error);
+            // Don't set loading to false here, still try individual messages
+          }
+        );
+        unsubscribes.push(conversationsUnsubscribe);
+
+        // 2. Listen to individual messages (non-group messages)
+        // Note: Individual messages don't have a conversationId field, so we can't filter by it
+        // We'll get all messages for this user and filter out group messages in the listener
+        const individualMessagesQuery = query(
           collection(firestore, "messages"),
           where("recipientId", "==", user.uid),
           orderBy("sentAt", "desc")
         );
-        messageQueries.push(individualQuery);
-        
-        // Group messages queries (Firestore limitation: need separate queries for each conversation)
-        userConversationIds.forEach(conversationId => {
-          const groupQuery = query(
-            collection(firestore, "messages"),
-            where("conversationId", "==", conversationId),
-            orderBy("sentAt", "desc")
-          );
-          messageQueries.push(groupQuery);
-        });
 
-        console.log('[HomeScreen] Setting up', messageQueries.length, 'message listeners');
-
-        // 3. Combine all message listeners
-        const unsubscribes: (() => void)[] = [];
-        const allMessages = new Map<string, Message>();
-        let completedQueries = 0;
-
-        const updateMessages = () => {
-          const sortedMessages = Array.from(allMessages.values()).sort((a, b) => {
-            const aTime = a.sentAt instanceof Date ? a.sentAt.getTime() : 
-                          (a.sentAt as any)?.seconds * 1000 || 0;
-            const bTime = b.sentAt instanceof Date ? b.sentAt.getTime() : 
-                          (b.sentAt as any)?.seconds * 1000 || 0;
-            return bTime - aTime; // Descending order (newest first)
-          });
-          
-          console.log('[HomeScreen] Combined messages updated:', sortedMessages.length);
-          setMessages(sortedMessages);
-          setLoading(false);
-        };
-
-        messageQueries.forEach((messageQuery, index) => {
-          const unsubscribe = onSnapshot(messageQuery, (querySnapshot) => {
-            console.log(`[HomeScreen] Query ${index} snapshot:`, querySnapshot.size, 'docs');
+        const individualMessagesUnsubscribe = onSnapshot(
+          individualMessagesQuery,
+          (snapshot) => {
+            console.log('[HomeScreen] Individual messages updated:', snapshot.size);
             
-            // Remove old messages from this query
-            querySnapshot.docChanges().forEach((change) => {
+            // Remove old individual messages
+            snapshot.docChanges().forEach((change) => {
               if (change.type === 'removed') {
-                allMessages.delete(change.doc.id);
+                allFeedItems.delete(`message-${change.doc.id}`);
               }
             });
-            
-            // Add/update messages from this query
-            querySnapshot.forEach((doc) => {
-              const messageData = { id: doc.id, ...doc.data() } as Message;
-              allMessages.set(doc.id, messageData);
-            });
-            
-            completedQueries++;
-            if (completedQueries >= messageQueries.length || allMessages.size > 0) {
-              updateMessages();
-            }
-          }, (error) => {
-            console.error(`Error in message query ${index}:`, error);
-            setLoading(false);
-          });
-          
-          unsubscribes.push(unsubscribe);
-        });
 
-        // If no queries (no conversations), still set up individual messages
-        if (messageQueries.length === 1) {
-          // Only individual messages query
-          updateMessages();
-        }
+            // Add/update individual messages (filter out group messages)
+            snapshot.forEach((doc) => {
+              const messageData = { id: doc.id, ...doc.data() } as Message;
+              
+              // Skip messages that have a conversationId (these are group messages)
+              if (messageData.conversationId) {
+                return;
+              }
+              
+              const timestamp = messageData.sentAt instanceof Date 
+                ? messageData.sentAt 
+                : new Date((messageData.sentAt as any)?.seconds * 1000);
+
+              allFeedItems.set(`message-${doc.id}`, {
+                id: `message-${doc.id}`,
+                type: 'message',
+                data: messageData,
+                timestamp,
+              });
+            });
+
+            updateFeed();
+          },
+          (error) => {
+            console.error('[HomeScreen] Error in individual messages query:', error);
+            setLoading(false);
+          }
+        );
+        unsubscribes.push(individualMessagesUnsubscribe);
+
+        // Initial update to show loading state is complete
+        updateFeed();
 
         return () => {
-          console.log('[HomeScreen] Cleaning up', unsubscribes.length, 'message listeners');
+          console.log('[HomeScreen] Cleaning up', unsubscribes.length, 'feed listeners');
           unsubscribes.forEach(unsub => unsub());
         };
 
       } catch (error) {
-        console.error('[HomeScreen] Error setting up message listeners:', error);
+        console.error('[HomeScreen] Error setting up feed listeners:', error);
         setLoading(false);
         return () => {}; // Return empty cleanup function
       }
     };
 
-    const cleanupPromise = fetchMessages();
+    const cleanupPromise = fetchFeedData();
     
     return () => {
-      cleanupPromise.then(cleanup => cleanup()).catch(console.error);
+      cleanupPromise.then((cleanup: () => void) => cleanup()).catch(console.error);
     };
   }, [user]);
 
@@ -231,12 +265,12 @@ export default function HomeScreen() {
 
       {loading ? (
         <View style={styles.centered}>
-          <Text style={styles.loadingText}>Loading messages...</Text>
+          <Text style={styles.loadingText}>Loading...</Text>
         </View>
-      ) : messages.length === 0 ? (
+      ) : feedItems.length === 0 ? (
         <View style={styles.centered}>
           <Text style={styles.emptyText}>Your inbox is empty.</Text>
-          <Text style={styles.emptySubtext}>Messages you receive will appear here.</Text>
+          <Text style={styles.emptySubtext}>Messages and conversations will appear here.</Text>
           <TouchableOpacity 
             style={styles.getStartedButton}
             onPress={handleNavigateToAddFriend}
@@ -246,9 +280,15 @@ export default function HomeScreen() {
         </View>
       ) : (
         <FlatList
-          data={messages}
+          data={feedItems}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <MessageItem message={item} />}
+          renderItem={({ item }) => {
+            if (item.type === 'conversation') {
+              return <GroupConversationItem conversation={item.data as Conversation} />;
+            } else {
+              return <MessageItem message={item.data as Message} />;
+            }
+          }}
           contentContainerStyle={styles.list}
         />
       )}

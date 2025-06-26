@@ -37,9 +37,9 @@ const logSending = (message: string, data?: any) => {
 interface RecipientOption {
   id: string;
   name: string;
-  type: 'friend' | 'group';
+  type: 'friend'; // Phase 3: Only friends supported in individual message flow
   photoURL?: string;
-  participantCount?: number;
+  // participantCount removed - not needed for individual friends
 }
 
 export default function SelectFriendScreen() {
@@ -143,33 +143,12 @@ export default function SelectFriendScreen() {
 
         logSending('Found friends:', friendsList.length);
 
-        // 2. Fetch group conversations
-        const conversationsSnapshot = await getDocs(
-          collection(firestore, "conversations")
-        );
-        
-        const groupsList: RecipientOption[] = [];
-        for (const conversationDoc of conversationsSnapshot.docs) {
-          const conversationData = conversationDoc.data() as Conversation;
-          
-          // Only include conversations where current user is a participant
-          if (conversationData.participantIds?.includes(auth.currentUser.uid)) {
-            groupsList.push({
-              id: conversationDoc.id,
-              name: conversationData.name || `Group (${conversationData.participantIds.length})`,
-              type: 'group',
-              participantCount: conversationData.participantIds.length,
-            });
-          }
-        }
+        // Phase 3: Groups are now handled exclusively through the Groups screen
+        // Individual message flow only supports direct friend-to-friend messaging
+        logSending('Groups excluded from individual messaging flow (Phase 3)');
 
-        logSending('Found groups:', groupsList.length);
-
-        // 3. Combine and sort (friends first, then groups)
-        const allRecipients = [
-          ...friendsList,
-          ...groupsList
-        ];
+        // 2. Use only friends for individual messaging
+        const allRecipients = friendsList;
 
         setRecipients(allRecipients);
         logSending('Total recipients available:', allRecipients.length);
@@ -246,9 +225,8 @@ export default function SelectFriendScreen() {
           mediaType: type 
         }),
         
-        // Add recipient info based on type
-        ...(recipient.type === 'friend' ? { recipientId: recipient.id } : {}),
-        ...(recipient.type === 'group' ? { conversationId: recipient.id } : {}),
+        // Phase 3: Only individual friend messaging supported in this flow
+        recipientId: recipient.id, // recipient.type is always 'friend' now
         
         // Future-proofing flags
         hasSummary: false,
@@ -263,12 +241,8 @@ export default function SelectFriendScreen() {
         content: isTextMessage ? text?.substring(0, 50) + '...' : 'media file'
       });
 
-      // 3. Create receipts based on recipient type
-      if (recipient.type === 'friend') {
-        await createIndividualReceipt(messageRef.id, recipient.id);
-      } else if (recipient.type === 'group') {
-        await createGroupReceipts(messageRef.id, recipient.id, auth.currentUser.uid);
-      }
+      // 3. Create receipt for individual friend (Phase 3: group handling removed)
+      await createIndividualReceipt(messageRef.id, recipient.id);
 
       // Success! Navigate back immediately with console feedback
       console.log(`✅ Message sent successfully to ${recipient.name}`, {
@@ -292,48 +266,7 @@ export default function SelectFriendScreen() {
     }
   };
 
-  // Helper function to create receipts for group messages
-  const createGroupReceipts = async (messageId: string, conversationId: string, senderId: string) => {
-    try {
-      logSending('📧 Creating group receipts', { messageId, conversationId });
-      
-      // Get conversation participants
-      const conversationRef = doc(firestore, 'conversations', conversationId);
-      const conversationSnap = await getDoc(conversationRef);
-      
-      if (!conversationSnap.exists()) {
-        throw new Error('Conversation not found');
-      }
-      
-      const conversationData = conversationSnap.data();
-      const participantIds = conversationData.participantIds || [];
-      
-      logSending('📧 Found participants', { count: participantIds.length, participantIds });
-      
-      // Create receipts for all participants except sender
-      const receiptPromises = participantIds
-        .filter((participantId: string) => participantId !== senderId)
-        .map(async (participantId: string) => {
-          const receiptId = `${messageId}_${participantId}`;
-          const receiptData = {
-            messageId,
-            userId: participantId,
-            conversationId,
-            receivedAt: serverTimestamp(),
-            viewedAt: null,
-          };
-          
-          return setDoc(doc(firestore, 'receipts', receiptId), receiptData);
-        });
-      
-      await Promise.all(receiptPromises);
-      logSending('✅ Group receipts created', { count: receiptPromises.length });
-      
-    } catch (error) {
-      logSending('❌ Error creating group receipts', error);
-      // Don't throw - message was sent successfully, receipt creation is secondary
-    }
-  };
+  // Phase 3: Group receipt creation removed - handled by group conversation components
 
   // Helper function to create receipt for individual messages
   const createIndividualReceipt = async (messageId: string, recipientId: string) => {
@@ -364,19 +297,12 @@ export default function SelectFriendScreen() {
       disabled={isSending}
     >
       <View style={styles.recipientInfo}>
-        {item.type === 'friend' ? (
-          <Image source={{ uri: item.photoURL || "" }} style={styles.avatar} />
-        ) : (
-          <View style={styles.groupAvatar}>
-            <Text style={styles.groupAvatarText}>👥</Text>
-          </View>
-        )}
+        {/* Phase 3: Only friends are shown, so always render friend avatar */}
+        <Image source={{ uri: item.photoURL || "" }} style={styles.avatar} />
         
         <View style={styles.recipientDetails}>
           <Text style={styles.recipientName}>{item.name}</Text>
-          <Text style={styles.recipientType}>
-            {item.type === 'friend' ? 'Friend' : `Group • ${item.participantCount} members`}
-          </Text>
+          <Text style={styles.recipientType}>Friend</Text>
         </View>
       </View>
       
@@ -435,8 +361,8 @@ export default function SelectFriendScreen() {
         keyExtractor={(item) => `${item.type}-${item.id}`}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No friends or groups to send to.</Text>
-            <Text style={styles.emptySubtext}>Add friends or create a group to get started!</Text>
+            <Text style={styles.emptyText}>No friends to send to.</Text>
+            <Text style={styles.emptySubtext}>Add friends to start messaging! Use Groups screen for group conversations.</Text>
           </View>
         }
         ItemSeparatorComponent={() => <View style={styles.separator} />}
@@ -478,18 +404,7 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     marginRight: 15,
   },
-  groupAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#e3f2fd',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 15,
-  },
-  groupAvatarText: {
-    fontSize: 20,
-  },
+  // Phase 3: Group avatar styles removed - only individual friends supported
   recipientDetails: {
     flex: 1,
   },

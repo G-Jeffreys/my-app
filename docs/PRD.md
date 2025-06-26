@@ -247,6 +247,7 @@ Client (React Native) ──► Cloud Functions API ──► Firestore
 | **S‑A Stories**       | 1. New `stories` collection (24 h TTL fixed).2. Horizontal story tray UI.3. Viewer list & analytics.                                      |
 | **S‑B Group Chat**    | 1. `conversations` doc with `participantIds` array.2. Gossip‑based receipts per member.3. Group name & avatar edit.                       |
 | **S‑C Basic Filters** | 1. Integrate `react‑native‑vision‑camera` frame processors.2. Implement color LUT filters (vintage, noir).3. Toggle UI in capture screen. |
+| **S‑D Group Member Management** | 1. "Add Member" UI in group settings screen.2. Update `participantIds` array in existing conversations.3. Handle receipt creation for new members joining existing conversations.4. Implement "Remove Member" and "Leave Group" functionality.5. Notifications for group membership changes. |
 
 ### 16.6 Timeline Estimate (Engineering Person‑Weeks)
 
@@ -260,6 +261,7 @@ Client (React Native) ──► Cloud Functions API ──► Firestore
 | S‑A            | 3       |
 | S‑B            | 4       |
 | S‑C            | 2       |
+| S‑D            | 3       |
 
 ---
 

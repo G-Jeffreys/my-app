@@ -19,16 +19,31 @@ import {
 } from "firebase/firestore";
 import { Auth } from "firebase/auth";
 import { firestore, storage, auth } from "../../lib/firebase";
+import { useAuth } from "../../store/useAuth";
 import Header from "../../components/Header";
 import PlatformVideo from "../../components/PlatformVideo";
+import TtlSelector from "../../components/TtlSelector";
+import { DEFAULT_TTL_PRESET, TtlPreset } from "../../config/messaging";
 
 export default function PreviewScreen() {
   const router = useRouter();
+  const { user } = useAuth();
   const { uri, type } = useLocalSearchParams<{
     uri: string;
     type: "image" | "video";
   }>();
   const [isUploading, setIsUploading] = useState(false);
+  // TTL state management - initialize with user's default or system default
+  const [selectedTtl, setSelectedTtl] = useState<TtlPreset>(
+    user?.defaultTtl || DEFAULT_TTL_PRESET
+  );
+
+  console.log('[PreviewScreen] Component rendered', {
+    hasUri: !!uri,
+    mediaType: type,
+    selectedTtl,
+    userDefaultTtl: user?.defaultTtl
+  });
 
   if (!uri) {
     router.back();
@@ -40,8 +55,16 @@ export default function PreviewScreen() {
     if (!auth.currentUser) return;
     setIsUploading(true);
 
+    console.log('[PreviewScreen] Sending media message', {
+      recipientId,
+      mediaType: type,
+      selectedTtl,
+      userId: auth.currentUser.uid
+    });
+
     try {
       // 1. Upload the media file to Firebase Storage
+      console.log('[PreviewScreen] Starting media upload...');
       const response = await fetch(uri);
       const blob = await response.blob();
       const storageRef = ref(
@@ -50,38 +73,53 @@ export default function PreviewScreen() {
       );
       await uploadBytes(storageRef, blob);
       const downloadURL = await getDownloadURL(storageRef);
+      console.log('[PreviewScreen] Media uploaded successfully', { downloadURL });
 
       // 2. Create a new message document in Firestore
+      console.log('[PreviewScreen] Creating message document...');
       await addDoc(collection(firestore, "messages"), {
         senderId: auth.currentUser.uid,
         recipientId: recipientId, // This needs to be updated for group chat later
         mediaURL: downloadURL,
         mediaType: type,
         sentAt: serverTimestamp(),
-        ttlPreset: '24h',
+        ttlPreset: selectedTtl, // Use selected TTL instead of hardcoded value
         text: null,
         viewed: false,
       });
 
+      console.log('[PreviewScreen] Message sent successfully with TTL:', selectedTtl);
       setIsUploading(false);
       router.replace("/(protected)/home");
     } catch (error) {
-      console.error("Failed to send media:", error);
+      console.error("[PreviewScreen] Failed to send media:", error);
       Alert.alert("Error", "Failed to send your message. Please try again.");
       setIsUploading(false);
     }
   };
 
   const navigateToSelectFriend = () => {
+    console.log('[PreviewScreen] Navigating to select friend', {
+      hasUri: !!uri,
+      mediaType: type,
+      selectedTtl
+    });
     router.push({
       pathname: "/(protected)/select-friend",
       params: { uri, type },
     });
   };
 
+  const handleTtlChange = (newTtl: TtlPreset) => {
+    console.log('[PreviewScreen] TTL changed', { from: selectedTtl, to: newTtl });
+    setSelectedTtl(newTtl);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <Header title="Preview" showBackButton={true} />
+      
+      {/* Media Preview */}
       {type === "image" ? (
         <Image source={{ uri }} style={styles.media} resizeMode="contain" />
       ) : (
@@ -95,6 +133,17 @@ export default function PreviewScreen() {
         />
       )}
 
+      {/* TTL Selector Overlay */}
+      <View style={styles.ttlContainer}>
+        <TtlSelector
+          selectedTtl={selectedTtl}
+          onTtlChange={handleTtlChange}
+          compact={true}
+          style={styles.ttlSelector}
+        />
+      </View>
+
+      {/* Loading Overlay */}
       {isUploading && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#fff" />
@@ -102,6 +151,7 @@ export default function PreviewScreen() {
         </View>
       )}
 
+      {/* Action Buttons */}
       <View style={styles.buttonContainer}>
         <TouchableOpacity
           onPress={() => router.back()}
@@ -130,11 +180,25 @@ const styles = StyleSheet.create({
   media: {
     flex: 1,
   },
+  ttlContainer: {
+    position: "absolute",
+    top: 100,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 20,
+    zIndex: 10,
+  },
+  ttlSelector: {
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    borderRadius: 12,
+    padding: 16,
+  },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0, 0, 0, 0.6)",
     justifyContent: "center",
     alignItems: "center",
+    zIndex: 20,
   },
   loadingText: {
     color: "white",
@@ -148,6 +212,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-around",
     paddingHorizontal: 20,
+    zIndex: 10,
   },
   button: {
     paddingVertical: 12,

@@ -208,20 +208,20 @@ const styles = StyleSheet.create({
   compactLabel: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#333',
+    color: '#fff',
     marginBottom: 8,
   },
   carouselContent: {
     paddingHorizontal: 4,
   },
   carouselOption: {
-    backgroundColor: '#f0f0f0',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     marginHorizontal: 4,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: 'rgba(224, 224, 224, 0.8)',
   },
   carouselOptionSelected: {
     backgroundColor: '#2196f3',

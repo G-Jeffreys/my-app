@@ -147,6 +147,11 @@ export default function SettingsScreen() {
 
         {/* TTL Settings Section */}
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Default Message Settings</Text>
+          <Text style={styles.sectionSubtitle}>
+            Set your default expiration time for new messages. You can override this for individual messages when composing.
+          </Text>
+          
           <TtlSelector
             selectedTtl={selectedTtl}
             onTtlChange={setSelectedTtl}
@@ -160,7 +165,7 @@ export default function SettingsScreen() {
             {loading ? (
               <ActivityIndicator color="#fff" size="small" />
             ) : (
-              <Text style={styles.updateButtonText}>Save Settings</Text>
+              <Text style={styles.updateButtonText}>Save Default Settings</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -398,5 +403,10 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 20,
   },
 }); 

@@ -1,340 +1,412 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, Platform } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, TextInput, ActivityIndicator, ScrollView } from 'react-native';
 import { useAuth } from '../../store/useAuth';
+import { doc, updateDoc } from 'firebase/firestore';
 import { firestore } from '../../lib/firebase';
-import { ANALYTICS_EVENTS, logEvent } from '../../lib/analytics';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Header from '../../components/Header';
+import ConfirmDialog from '../../components/ConfirmDialog';
+import TtlSelector from '../../components/TtlSelector';
+import { useRouter } from 'expo-router';
+import { DEFAULT_TTL_PRESET, TtlPreset } from '../../config/messaging';
 
-const TTL_PRESETS = ['30s', '1m', '5m', '1h', '6h', '24h'];
-
-// Retry function with exponential backoff
-const retryWithBackoff = async (fn: () => Promise<any>, maxRetries = 3, baseDelay = 1000) => {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error: any) {
-      console.log(`[Settings] Attempt ${attempt} failed:`, error?.code || error?.message);
-      
-      if (attempt === maxRetries) {
-        throw error;
-      }
-      
-      // Check if it's a retryable error
-      if (error?.code === 'firestore/unavailable' || 
-          error?.code === 'firestore/deadline-exceeded' ||
-          error?.message?.includes('network')) {
-        const delay = baseDelay * Math.pow(2, attempt - 1);
-        console.log(`[Settings] Retrying in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      } else {
-        // Non-retryable error, throw immediately
-        throw error;
-      }
-    }
-  }
-};
-
-const SettingsScreen = () => {
-  const { user } = useAuth();
-  const [defaultTtl, setDefaultTtl] = useState('1h');
+export default function SettingsScreen() {
+  const router = useRouter();
+  const { user, signOut, setUser } = useAuth();
+  const [newDisplayName, setNewDisplayName] = useState(user?.displayName || "");
+  const [selectedTtl, setSelectedTtl] = useState<TtlPreset>(user?.defaultTtl as TtlPreset || DEFAULT_TTL_PRESET);
   const [loading, setLoading] = useState(false);
-  const [firestoreError, setFirestoreError] = useState<string | null>(null);
+  const [showSignOutDialog, setShowSignOutDialog] = useState(false);
+  const [showUpdateDialog, setShowUpdateDialog] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState('');
 
-  useEffect(() => {
-    const fetchUserSettings = async () => {
-      if (!user) {
-        console.log('[Settings] No user available, skipping settings fetch');
-        return;
-      }
-      
-      console.log('[Settings] Fetching user settings for user:', user.uid);
-      console.log('[Settings] User object:', { uid: user.uid, email: user.email, displayName: user.displayName });
-      
-      try {
-        setFirestoreError(null);
-        
-        // Validate firestore instance
-        if (!firestore) {
-          console.error('[Settings] Firestore instance is null or undefined');
-          setFirestoreError('Firestore not available');
-          return;
-        }
-        
-        console.log('[Settings] Firestore instance is available, creating user reference');
-        
-        const fetchOperation = async () => {
-          // Use unified Firebase API
-          const userRef = firestore.collection('users').doc(user.uid);
-          console.log('[Settings] User reference created, fetching document');
-          
-          const userSnap = await userRef.get();
-          console.log('[Settings] Document fetch complete, exists:', userSnap.exists());
-          
-          if (userSnap.exists()) {
-            const userData = userSnap.data();
-            console.log('[Settings] User data:', userData);
-            
-            if (userData?.defaultTtl) {
-              const ttl = userData.defaultTtl;
-              console.log('[Settings] Found saved default TTL:', ttl);
-              setDefaultTtl(ttl);
-            } else {
-              console.log('[Settings] No saved TTL found in user data, using default 1h');
-              setDefaultTtl('1h');
-            }
-          } else {
-            console.log('[Settings] User document does not exist, using default 1h');
-            setDefaultTtl('1h');
-          }
-        };
-        
-        await retryWithBackoff(fetchOperation);
-        
-      } catch (error: any) {
-        console.error('[Settings] Error fetching user settings:', error);
-        console.error('[Settings] Error details:', {
-          message: error?.message || 'Unknown error',
-          code: error?.code || 'No error code',
-          stack: error?.stack || 'No stack trace'
-        });
-        
-        if (error?.code === 'firestore/unavailable') {
-          setFirestoreError('Firestore service is not enabled. Please enable Cloud Firestore in Firebase Console.');
-        } else {
-          setFirestoreError('Unable to load settings');
-        }
-        
-        setDefaultTtl('1h'); // Fallback to default
-      }
-    };
-    fetchUserSettings();
-  }, [user]);
+  console.log('[SettingsScreen] Component rendered for user:', user?.email);
 
-  const handleSave = async () => {
-    if (!user) {
-      console.error('[Settings] No user available for saving settings');
-      Alert.alert('Error', 'No user is logged in. Please log in and try again.');
+  const handleUpdateProfile = async () => {
+    if (!user || !newDisplayName.trim()) {
+      setUpdateMessage("Display name cannot be empty.");
+      setShowUpdateDialog(true);
       return;
     }
     
-    console.log('[Settings] Starting save process...');
-    console.log('[Settings] User:', { uid: user.uid, email: user.email, displayName: user.displayName });
-    console.log('[Settings] Saving default TTL:', defaultTtl);
-    
-    // Validate TTL value
-    if (!TTL_PRESETS.includes(defaultTtl)) {
-      console.error('[Settings] Invalid TTL value:', defaultTtl);
-      Alert.alert('Error', 'Invalid TTL value selected. Please select a valid option.');
-      return;
-    }
-    
+    console.log('[SettingsScreen] Updating profile for user:', user.uid);
     setLoading(true);
-    setFirestoreError(null);
     
     try {
-      // Validate firestore instance
-      if (!firestore) {
-        throw new Error('Firestore instance is not available');
-      }
-      
-      console.log('[Settings] Firestore instance validated, creating user reference');
-      
-      const saveOperation = async () => {
-        // Use unified Firebase API
-        const userRef = firestore.collection('users').doc(user.uid);
-        console.log('[Settings] User reference created for:', user.uid);
-        
-        // Check if user document exists first
-        console.log('[Settings] Checking if user document exists...');
-        const userSnap = await userRef.get();
-        console.log('[Settings] Document exists check complete, exists:', userSnap.exists());
-        
-        if (userSnap.exists()) {
-          console.log('[Settings] Document exists, updating with defaultTtl...');
-          
-          // Update existing document
-          await userRef.update({ 
-            defaultTtl,
-            updatedAt: firestore.FieldValue.serverTimestamp()
-          });
-          console.log('[Settings] ✅ Successfully updated existing user document with TTL:', defaultTtl);
-        } else {
-          console.log('[Settings] Document does not exist, creating new document...');
-          
-          // Create new document with user data
-          const newUserData = {
-            id: user.uid,
-            email: user.email,
-            displayName: user.displayName,
-            defaultTtl,
-            createdAt: firestore.FieldValue.serverTimestamp(),
-            updatedAt: firestore.FieldValue.serverTimestamp()
-          };
-          
-          console.log('[Settings] Creating document with data:', newUserData);
-          await userRef.set(newUserData);
-          console.log('[Settings] ✅ Successfully created new user document with TTL:', defaultTtl);
-        }
-      };
-      
-      await retryWithBackoff(saveOperation);
-      
-      console.log('[Settings] 🎉 Save operation completed successfully!');
-      Alert.alert('Success', `Default TTL saved as ${defaultTtl}! 🎉`);
-      
-      // Log analytics event
-      try {
-        await logEvent(ANALYTICS_EVENTS.TTL_SELECTED, { 
-          ttl: defaultTtl, 
-          screen: 'settings',
-          action: 'save_default'
-        });
-        console.log('[Settings] Analytics event logged successfully');
-      } catch (analyticsError) {
-        console.warn('[Settings] Failed to log analytics event:', analyticsError);
-      }
-      
-    } catch (error: any) {
-      console.error('[Settings] ❌ Error saving settings:', error);
-      console.error('[Settings] Error details:', {
-        message: error?.message || 'Unknown error',
-        code: error?.code || 'No error code',
-        stack: error?.stack || 'No stack trace',
-        name: error?.name || 'Unknown error type'
+      const userRef = doc(firestore, "users", user.uid);
+      await updateDoc(userRef, {
+        displayName: newDisplayName,
+        defaultTtl: selectedTtl,
       });
-      
-      // Provide more specific error messages
-      let errorMessage = 'Could not save settings. Please try again.';
-      
-      if (error?.code === 'firestore/unavailable') {
-        errorMessage = '🚨 FIRESTORE NOT ENABLED: Please enable Cloud Firestore in Firebase Console first, then try again.';
-        setFirestoreError('Firestore service is not enabled');
-      } else if (error?.code === 'permission-denied') {
-        errorMessage = 'Permission denied. Please check your authentication and try again.';
-      } else if (error?.code === 'unavailable') {
-        errorMessage = 'Service unavailable. Please check your internet connection and try again.';
-      } else if (error?.message?.includes('offline')) {
-        errorMessage = 'You appear to be offline. Please check your internet connection and try again.';
-      }
-      
-      Alert.alert('Error', errorMessage);
+
+      // Update the local user state in Zustand
+      const updatedUser = { ...user, displayName: newDisplayName, defaultTtl: selectedTtl };
+      setUser(updatedUser);
+
+      console.log('[SettingsScreen] Profile updated successfully');
+      setUpdateMessage("Your profile has been updated.");
+      setShowUpdateDialog(true);
+    } catch (error) {
+      console.error("[SettingsScreen] Error updating profile:", error);
+      setUpdateMessage("Failed to update your profile.");
+      setShowUpdateDialog(true);
     } finally {
       setLoading(false);
     }
   };
 
+  const handleSignOut = () => {
+    console.log('[SettingsScreen] Sign out requested');
+    setShowSignOutDialog(true);
+  };
+
+  const confirmSignOut = async () => {
+    console.log('[SettingsScreen] Proceeding with sign out');
+    setShowSignOutDialog(false);
+    setLoading(true);
+    try {
+      await signOut();
+      console.log('[SettingsScreen] Sign out successful');
+      // Navigation will be handled by the auth state change
+      router.replace('/');
+    } catch (error) {
+      console.error("[SettingsScreen] Error signing out:", error);
+      setLoading(false);
+      setUpdateMessage("Failed to sign out. Please try again.");
+      setShowUpdateDialog(true);
+    }
+  };
+
+  const cancelSignOut = () => {
+    console.log('[SettingsScreen] Sign out cancelled');
+    setShowSignOutDialog(false);
+  };
+
+  const dismissUpdateDialog = () => {
+    console.log('[SettingsScreen] Update dialog dismissed');
+    setShowUpdateDialog(false);
+    setUpdateMessage('');
+  };
+
+  const handleNavigateToFriends = () => {
+    console.log('[SettingsScreen] Navigating to friends page');
+    router.push("/(protected)/friends");
+  };
+
+  const handleNavigateToAddFriend = () => {
+    console.log('[SettingsScreen] Navigating to add friend page');
+    router.push("/(protected)/add-friend");
+  };
+
+  const handleNavigateToHome = () => {
+    console.log('[SettingsScreen] Navigating to home page');
+    router.push("/(protected)/home");
+  };
+
   return (
-    <View className="flex-1 bg-white">
-      <Header title="Settings" showBackButton={true} />
+    <SafeAreaView style={styles.container}>
+      <Header title="Settings" showBackButton />
       
-      <View style={styles.container}>
-        {firestoreError && (
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>⚠️ {firestoreError}</Text>
-            <Text style={styles.errorInstructions}>
-              Please enable Cloud Firestore in Firebase Console
-            </Text>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* User Profile Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Profile Information</Text>
+          
+          <View style={styles.fieldContainer}>
+            <Text style={styles.label}>Email</Text>
+            <View style={styles.emailContainer}>
+              <Text style={styles.emailText}>{user?.email}</Text>
+              <View style={styles.verifiedBadge}>
+                <Text style={styles.verifiedText}>✓ Verified</Text>
+              </View>
+            </View>
           </View>
-        )}
-        
-        <Text style={styles.label}>Default Snap TTL</Text>
-        <View style={styles.ttlContainer}>
-          {TTL_PRESETS.map((ttl) => (
+
+          <View style={styles.fieldContainer}>
+            <Text style={styles.label}>Display Name</Text>
+            <TextInput
+              style={styles.input}
+              value={newDisplayName}
+              onChangeText={setNewDisplayName}
+              placeholder="Enter your display name"
+              autoCapitalize="words"
+            />
             <TouchableOpacity
-              key={ttl}
-              style={[styles.ttlButton, defaultTtl === ttl && styles.ttlButtonSelected]}
-              onPress={() => {
-                console.log('[Settings] TTL button pressed:', ttl);
-                setDefaultTtl(ttl);
-                logEvent(ANALYTICS_EVENTS.TTL_SELECTED, { ttl, screen: 'settings' });
-              }}
+              style={[styles.updateButton, loading && styles.buttonDisabled]}
+              onPress={handleUpdateProfile}
+              disabled={loading}
             >
-              <Text style={styles.ttlButtonText}>{ttl}</Text>
+              {loading ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={styles.updateButtonText}>Update Display Name</Text>
+              )}
             </TouchableOpacity>
-          ))}
+          </View>
         </View>
-        <TouchableOpacity 
-          onPress={handleSave} 
-          disabled={loading || !!firestoreError} 
-          style={[
-            styles.saveButton, 
-            (loading || !!firestoreError) && styles.saveButtonDisabled
-          ]}
-        >
-          <Text style={styles.saveButtonText}>
-            {loading ? 'Saving...' : firestoreError ? 'Enable Firestore First' : 'Save'}
+
+        {/* TTL Settings Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Default Message Settings</Text>
+          <Text style={styles.sectionSubtitle}>
+            Set your default expiration time for new messages. You can override this for individual messages when composing.
           </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+          
+          <TtlSelector
+            selectedTtl={selectedTtl}
+            onTtlChange={setSelectedTtl}
+          />
+          
+          <TouchableOpacity
+            style={[styles.updateButton, loading && styles.buttonDisabled]}
+            onPress={handleUpdateProfile}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.updateButtonText}>Save Default Settings</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Quick Actions Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Quick Actions</Text>
+          
+          <TouchableOpacity style={styles.actionButton} onPress={handleNavigateToHome}>
+            <Text style={styles.actionIcon}>🏠</Text>
+            <View style={styles.actionContent}>
+              <Text style={styles.actionTitle}>Go to Inbox</Text>
+              <Text style={styles.actionSubtitle}>View your messages</Text>
+            </View>
+            <Text style={styles.actionArrow}>›</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.actionButton} onPress={handleNavigateToFriends}>
+            <Text style={styles.actionIcon}>👥</Text>
+            <View style={styles.actionContent}>
+              <Text style={styles.actionTitle}>Manage Friends</Text>
+              <Text style={styles.actionSubtitle}>View and manage your friend list</Text>
+            </View>
+            <Text style={styles.actionArrow}>›</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.actionButton} onPress={handleNavigateToAddFriend}>
+            <Text style={styles.actionIcon}>➕</Text>
+            <View style={styles.actionContent}>
+              <Text style={styles.actionTitle}>Add Friends</Text>
+              <Text style={styles.actionSubtitle}>Find and add new friends</Text>
+            </View>
+            <Text style={styles.actionArrow}>›</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* App Information Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>App Information</Text>
+          
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>App Version</Text>
+            <Text style={styles.infoValue}>1.0.0</Text>
+          </View>
+          
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>User ID</Text>
+            <Text style={styles.infoValue}>{user?.uid?.slice(-8) || 'N/A'}</Text>
+          </View>
+        </View>
+
+        {/* Danger Zone */}
+        <View style={[styles.section, styles.dangerSection]}>
+          <Text style={styles.sectionTitle}>Account</Text>
+          
+          <TouchableOpacity style={styles.logoutButton} onPress={handleSignOut}>
+            <Text style={styles.logoutIcon}>🚪</Text>
+            <Text style={styles.logoutButtonText}>Sign Out</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+
+      <ConfirmDialog
+        visible={showSignOutDialog}
+        title="Sign Out"
+        message="Are you sure you want to sign out?"
+        confirmText="Sign Out"
+        cancelText="Cancel"
+        confirmColor="red"
+        onConfirm={confirmSignOut}
+        onCancel={cancelSignOut}
+      />
+
+      <ConfirmDialog
+        visible={showUpdateDialog}
+        title="Notice"
+        message={updateMessage}
+        confirmText="OK"
+        cancelText="OK"
+        confirmColor="blue"
+        onConfirm={dismissUpdateDialog}
+        onCancel={dismissUpdateDialog}
+      />
+    </SafeAreaView>
   );
-};
+}
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#f8f9fa',
+  },
+  scrollContent: {
+    paddingBottom: 40,
+  },
+  section: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginVertical: 8,
+    borderRadius: 12,
     padding: 20,
-    backgroundColor: 'white',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
-  errorContainer: {
-    backgroundColor: '#ffebee',
-    padding: 15,
-    borderRadius: 8,
-    marginBottom: 20,
-    borderLeftWidth: 4,
-    borderLeftColor: '#f44336',
+  dangerSection: {
+    borderColor: '#fecaca',
+    borderWidth: 1,
   },
-  errorText: {
-    color: '#d32f2f',
+  sectionTitle: {
+    fontSize: 20,
     fontWeight: 'bold',
-    fontSize: 16,
-    marginBottom: 5,
+    color: '#1f2937',
+    marginBottom: 16,
   },
-  errorInstructions: {
-    color: '#666',
-    fontSize: 14,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
+  fieldContainer: {
     marginBottom: 20,
   },
   label: {
-    fontSize: 18,
-    marginBottom: 10,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
   },
-  ttlContainer: {
+  emailContainer: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    marginBottom: 30,
-  },
-  ttlButton: {
-    padding: 15,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderRadius: 8,
-    backgroundColor: '#f0f0f0',
-    margin: 5,
   },
-  ttlButtonSelected: {
-    backgroundColor: '#007BFF',
+  emailText: {
+    fontSize: 16,
+    color: '#1f2937',
+    flex: 1,
   },
-  ttlButtonText: {
-    color: 'black',
+  verifiedBadge: {
+    backgroundColor: '#d1fae5',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
   },
-  saveButton: {
-    backgroundColor: '#007BFF',
-    padding: 15,
+  verifiedText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#065f46',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    padding: 12,
+    borderRadius: 8,
+    fontSize: 16,
+    backgroundColor: '#fff',
+    marginBottom: 12,
+  },
+  updateButton: {
+    backgroundColor: '#3b82f6',
+    padding: 12,
     borderRadius: 8,
     alignItems: 'center',
   },
-  saveButtonDisabled: {
-    backgroundColor: '#cccccc',
+  buttonDisabled: {
+    opacity: 0.6,
   },
-  saveButtonText: {
-    color: 'white',
+  updateButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  actionIcon: {
+    fontSize: 24,
+    marginRight: 16,
+  },
+  actionContent: {
+    flex: 1,
+  },
+  actionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 2,
+  },
+  actionSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  actionArrow: {
+    fontSize: 20,
+    color: '#9ca3af',
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  infoLabel: {
+    fontSize: 16,
+    color: '#374151',
+  },
+  infoValue: {
+    fontSize: 16,
+    color: '#6b7280',
+    fontFamily: 'monospace',
+  },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ef4444',
+    padding: 16,
+    borderRadius: 8,
+  },
+  logoutIcon: {
+    fontSize: 20,
+    marginRight: 8,
+  },
+  logoutButtonText: {
+    color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
   },
-});
-
-export default SettingsScreen; 
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 20,
+  },
+}); 

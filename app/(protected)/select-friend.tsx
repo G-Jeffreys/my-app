@@ -1,210 +1,497 @@
-import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
-import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  FlatList,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  Alert,
+  Image,
+} from "react-native";
+import React, { useEffect, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  getDocs,
+  doc,
+  getDoc,
+  setDoc,
+} from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { firestore, auth, storage } from "../../lib/firebase";
+import { User } from "../../models/firestore/user";
+import { Conversation } from "../../models/firestore/conversation";
+import Header from "../../components/Header";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Friend } from "../../models/firestore/friend";
+import { DEFAULT_TTL_PRESET, TtlPreset, isValidTtlPreset } from '../../config/messaging';
 import { useAuth } from '../../store/useAuth';
-import { firestore } from '../../lib/firebase';
-import { Friend } from '../../models/firestore/friend';
-import { router, useLocalSearchParams } from 'expo-router';
-import { User } from '../../models/firestore/user';
-import Header from '../../components/Header';
 
-const SelectFriendScreen = () => {
-  const { user } = useAuth();
-  const [friends, setFriends] = useState<User[]>([]);
-  const params = useLocalSearchParams();
-
-  useEffect(() => {
-    console.log('[SelectFriend] Component mounted, fetching friends...');
-    
-    const fetchFriends = async () => {
-      if (!user) {
-        console.log('[SelectFriend] No user available, skipping friends fetch');
-        return;
-      }
-      
-      console.log('[SelectFriend] Fetching friends for user:', user.uid);
-      
-      try {
-        // Use unified Firebase API - get all friends as a query
-        const friendsCollectionRef = firestore.collection('users').doc(user.uid).collection('friends');
-        
-        // Since we need to get all documents, we can use onSnapshot with immediate callback
-        // or use a query to get all documents
-        return new Promise<void>((resolve) => {
-          const unsubscribe = friendsCollectionRef.onSnapshot(async (friendsSnapshot) => {
-            console.log('[SelectFriend] Found friends documents:', friendsSnapshot.docs.length);
-            
-            const friendPromises = friendsSnapshot.docs.map(async (friendDoc: any) => {
-              const friendData = friendDoc.data() as Friend;
-              console.log('[SelectFriend] Processing friend:', friendData);
-              
-              const userDocRef = firestore.collection('users').doc(friendData.friendId);
-              const userSnapshot = await userDocRef.get();
-
-              if (userSnapshot.exists()) {
-                const userData = userSnapshot.data();
-                console.log('[SelectFriend] Friend user data:', userData);
-                return { id: userSnapshot.id, ...userData } as User;
-              }
-              return null;
-            });
-
-            const friendsData = (await Promise.all(friendPromises)).filter((f: any) => f !== null) as User[];
-            console.log('[SelectFriend] Final friends list:', friendsData);
-            setFriends(friendsData);
-            unsubscribe(); // Clean up the listener after first load
-            resolve();
-          });
-        });
-      } catch (error) {
-        console.error('[SelectFriend] Error fetching friends:', error);
-      }
-    };
-
-    fetchFriends();
-  }, [user]);
-
-  const onSelectFriend = (friend: User) => {
-    console.log('[SelectFriend] Selected friend:', friend);
-    const { uri, mediaType } = params;
-    router.replace({ 
-      pathname: '/(protected)/preview', 
-      params: { 
-        uri, 
-        mediaType, 
-        recipientId: friend.id, 
-        recipientName: friend.displayName 
-      }
-    });
-  };
-
-  return (
-    <View style={styles.fullContainer}>
-      <Header title="Select Friend" showBackButton={true} />
-      <View style={styles.container}>
-        <FlatList
-          data={friends}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContainer}
-          showsVerticalScrollIndicator={true}
-          renderItem={({ item }) => (
-            <TouchableOpacity 
-              style={styles.friendItem} 
-              onPress={() => onSelectFriend(item)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.friendContent}>
-                <View style={styles.friendAvatar}>
-                  <Text style={styles.friendAvatarText}>
-                    {(item.displayName || item.email || '?').charAt(0).toUpperCase()}
-                  </Text>
-                </View>
-                <View style={styles.friendInfo}>
-                  <Text style={styles.friendName}>{item.displayName || item.email}</Text>
-                  <Text style={styles.friendEmail}>{item.email}</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
-          )}
-          ListEmptyComponent={() => (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>No friends found. Add some friends first!</Text>
-              <TouchableOpacity 
-                style={styles.addFriendButton}
-                onPress={() => router.push('/(protected)/add-friend')}
-              >
-                <Text style={styles.addFriendButtonText}>Add Friends</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        />
-      </View>
-    </View>
-  );
+// Console log function for debugging message sending
+const logSending = (message: string, data?: any) => {
+  console.log(`[SelectFriend] ${message}`, data ? data : '');
 };
 
+interface RecipientOption {
+  id: string;
+  name: string;
+  type: 'friend'; // Phase 3: Only friends supported in individual message flow
+  photoURL?: string;
+  // participantCount removed - not needed for individual friends
+}
+
+export default function SelectFriendScreen() {
+  const router = useRouter();
+  const { user } = useAuth();
+  const { uri, type, selectedTtl, text } = useLocalSearchParams<{
+    uri?: string;
+    type?: "image" | "video" | "text";
+    selectedTtl: string;
+    text?: string;
+  }>();
+  const [recipients, setRecipients] = useState<RecipientOption[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isSending, setIsSending] = useState(false);
+  const [selectedRecipientId, setSelectedRecipientId] = useState<string | null>(null);
+
+  // Validate and set TTL with proper fallback
+  const ttlToUse = selectedTtl && isValidTtlPreset(selectedTtl) 
+    ? selectedTtl as TtlPreset 
+    : (user?.defaultTtl || DEFAULT_TTL_PRESET);
+
+  // Determine message type
+  const isTextMessage = type === 'text' || (text && !uri);
+  const isMediaMessage = !!uri && type && ['image', 'video'].includes(type);
+
+  console.log('[SelectFriendScreen] Component rendered', {
+    hasUri: !!uri,
+    hasText: !!text,
+    mediaType: type,
+    selectedTtl,
+    ttlToUse,
+    hasTtlParam: !!selectedTtl,
+    isValidTtl: selectedTtl ? isValidTtlPreset(selectedTtl) : false,
+    userDefaultTtl: user?.defaultTtl,
+    isTextMessage,
+    isMediaMessage,
+    messageContent: isTextMessage ? text?.substring(0, 50) + '...' : 'media'
+  });
+
+  useEffect(() => {
+    // Validate required parameters
+    if (!isTextMessage && !isMediaMessage) {
+      console.error('[SelectFriendScreen] Missing required params:', { uri, type, text, selectedTtl });
+      Alert.alert('Error', 'Missing message content. Please go back and try again.');
+      router.back();
+      return;
+    }
+
+    if (isTextMessage && (!text || text.trim().length === 0)) {
+      console.error('[SelectFriendScreen] Empty text message');
+      Alert.alert('Error', 'Text message cannot be empty. Please go back and add content.');
+      router.back();
+      return;
+    }
+
+    console.log('[SelectFriendScreen] Validation passed', { 
+      isTextMessage, 
+      isMediaMessage,
+      hasValidContent: isTextMessage ? !!text?.trim() : !!uri
+    });
+
+    fetchRecipients();
+  }, []);
+
+  const fetchRecipients = async () => {
+    try {
+      console.log('[SelectFriendScreen] Fetching recipients...');
+      if (!auth.currentUser) return;
+      setLoading(true);
+      
+      try {
+        logSending('Fetching friends and groups for user:', auth.currentUser.uid);
+        
+        // 1. Fetch individual friends
+        const friendsCollectionRef = collection(
+          firestore,
+          "users",
+          auth.currentUser.uid,
+          "friends"
+        );
+        const friendsSnapshot = await getDocs(friendsCollectionRef);
+        const friendPromises = friendsSnapshot.docs.map(async (friendDoc) => {
+          const friendData = friendDoc.data() as Friend;
+          const userDocRef = doc(firestore, "users", friendData.friendId);
+          const userSnap = await getDoc(userDocRef);
+          if (userSnap.exists()) {
+            const userData = userSnap.data() as User;
+            return {
+              id: userSnap.id,
+              name: userData.displayName || 'Unknown',
+              type: 'friend' as const,
+              photoURL: userData.photoURL,
+            } as RecipientOption;
+          }
+          return null;
+        });
+
+        const friendsList = (await Promise.all(friendPromises)).filter(
+          (f): f is RecipientOption => f !== null
+        );
+
+        logSending('Found friends:', friendsList.length);
+
+        // Phase 3: Groups are now handled exclusively through the Groups screen
+        // Individual message flow only supports direct friend-to-friend messaging
+        logSending('Groups excluded from individual messaging flow (Phase 3)');
+
+        // 2. Use only friends for individual messaging
+        const allRecipients = friendsList;
+
+        setRecipients(allRecipients);
+        logSending('Total recipients available:', allRecipients.length);
+
+      } catch (error) {
+        console.error("Failed to fetch recipients:", error);
+        Alert.alert("Error", "Could not load your friends and groups.");
+      } finally {
+        setLoading(false);
+      }
+    } catch (error) {
+      console.error("Failed to fetch recipients:", error);
+      Alert.alert("Error", "Failed to load recipients. Please try again later.");
+    }
+  };
+
+  const handleSend = async (recipient: RecipientOption) => {
+    if (!auth.currentUser || (!isTextMessage && (!uri || !type)) || (isTextMessage && !text?.trim())) {
+      Alert.alert("Error", "Missing information to send message.");
+      return;
+    }
+
+    setSelectedRecipientId(recipient.id);
+    setIsSending(true);
+
+    logSending('Sending message', {
+      recipientId: recipient.id,
+      recipientName: recipient.name,
+      recipientType: recipient.type,
+      messageType: isTextMessage ? 'text' : type,
+      hasUri: !!uri,
+      hasText: !!text,
+      selectedTtl,
+      ttlToUse,
+      willUseTtl: ttlToUse
+    });
+
+    try {
+      let downloadURL = null;
+
+      // Step 1: Upload media if this is a media message
+      if (isMediaMessage && uri) {
+        console.log('[SelectFriendScreen] Uploading media file...');
+        const response = await fetch(uri);
+        const blob = await response.blob();
+        const filename = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        const storageRef = ref(storage, `messages/${filename}`);
+        await uploadBytes(storageRef, blob);
+        downloadURL = await getDownloadURL(storageRef);
+        console.log('[SelectFriendScreen] Media upload completed:', { downloadURL });
+      }
+
+      // Step 2: Create message document
+      console.log('[SelectFriendScreen] Creating message with TTL:', {
+        ttlToUse,
+        selectedTtl,
+        messageWillHaveTtl: ttlToUse,
+        messageType: isTextMessage ? 'text' : 'media'
+      });
+      
+      const messageData = {
+        senderId: auth.currentUser.uid,
+        sentAt: serverTimestamp(),
+        ttlPreset: ttlToUse,
+        
+        // Add message content based on type
+        ...(isTextMessage ? { 
+          text: text?.trim(), 
+          mediaURL: null,
+          mediaType: "text" 
+        } : { 
+          text: null,
+          mediaURL: downloadURL,
+          mediaType: type 
+        }),
+        
+        // Phase 3: Only individual friend messaging supported in this flow
+        recipientId: recipient.id, // recipient.type is always 'friend' now
+        
+        // Future-proofing flags
+        hasSummary: false,
+        summaryGenerated: false,
+        ephemeralOnly: false,
+      };
+
+      const messageRef = await addDoc(collection(firestore, 'messages'), messageData);
+      console.log('[SelectFriendScreen] Message created successfully:', { 
+        messageId: messageRef.id,
+        messageType: isTextMessage ? 'text' : 'media',
+        content: isTextMessage ? text?.substring(0, 50) + '...' : 'media file'
+      });
+
+      // 3. Create receipt for individual friend (Phase 3: group handling removed)
+      await createIndividualReceipt(messageRef.id, recipient.id);
+
+      // Success! Navigate back immediately with console feedback
+      console.log(`✅ Message sent successfully to ${recipient.name}`, {
+        messageType: isTextMessage ? 'text' : type,
+        recipient: recipient.name,
+        recipientType: recipient.type,
+        ttl: ttlToUse,
+        messageId: messageRef.id
+      });
+      
+      // Navigate back to home immediately
+      router.replace("/(protected)/home");
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      Alert.alert(
+        "Error",
+        `Failed to send ${isTextMessage ? 'text message' : type}. Please try again.`
+      );
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // Phase 3: Group receipt creation removed - handled by group conversation components
+
+  // Helper function to create receipt for individual messages
+  const createIndividualReceipt = async (messageId: string, recipientId: string) => {
+    try {
+      logSending('📧 Creating individual receipt', { messageId, recipientId });
+      
+      const receiptId = `${messageId}_${recipientId}`;
+      const receiptData = {
+        messageId,
+        userId: recipientId,
+        receivedAt: serverTimestamp(),
+        viewedAt: null,
+      };
+      
+      await setDoc(doc(firestore, 'receipts', receiptId), receiptData);
+      logSending('✅ Individual receipt created', { receiptId });
+      
+    } catch (error) {
+      logSending('❌ Error creating individual receipt', error);
+      // Don't throw - message was sent successfully, receipt creation is secondary
+    }
+  };
+
+  const renderRecipient = ({ item }: { item: RecipientOption }) => (
+    <TouchableOpacity
+      style={styles.recipientRow}
+      onPress={() => handleSend(item)}
+      disabled={isSending}
+    >
+      <View style={styles.recipientInfo}>
+        {/* Phase 3: Only friends are shown, so always render friend avatar */}
+        <Image source={{ uri: item.photoURL || "" }} style={styles.avatar} />
+        
+        <View style={styles.recipientDetails}>
+          <Text style={styles.recipientName}>{item.name}</Text>
+          <Text style={styles.recipientType}>Friend</Text>
+        </View>
+      </View>
+      
+      {isSending && selectedRecipientId === item.id && (
+        <ActivityIndicator color="#2196f3" />
+      )}
+    </TouchableOpacity>
+  );
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Header title="Select Recipient" showBackButton />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading contacts...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <Header 
+        title={`Send ${isTextMessage ? 'Message' : type === 'image' ? 'Photo' : 'Video'}`} 
+        showBackButton 
+      />
+      
+      {/* Message Preview */}
+      <View style={styles.messagePreview}>
+        {isTextMessage ? (
+          <View style={styles.textPreview}>
+            <Text style={styles.previewLabel}>Your Message:</Text>
+            <Text style={styles.textContent} numberOfLines={3}>
+              {text}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.mediaPreview}>
+            <Text style={styles.previewLabel}>Your {type}:</Text>
+            {type === "image" ? (
+              <Image source={{ uri }} style={styles.previewImage} />
+            ) : (
+              <View style={styles.videoPreview}>
+                <Text style={styles.videoText}>📹 Video Ready</Text>
+              </View>
+            )}
+          </View>
+        )}
+        <Text style={styles.ttlInfo}>Expires: {ttlToUse}</Text>
+      </View>
+      
+      <FlatList
+        data={recipients}
+        renderItem={renderRecipient}
+        keyExtractor={(item) => `${item.type}-${item.id}`}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>No friends to send to.</Text>
+            <Text style={styles.emptySubtext}>Add friends to start messaging! Use Groups screen for group conversations.</Text>
+          </View>
+        }
+        ItemSeparatorComponent={() => <View style={styles.separator} />}
+      />
+    </SafeAreaView>
+  );
+}
+
 const styles = StyleSheet.create({
-  fullContainer: {
+  container: { 
+    flex: 1, 
+    backgroundColor: "white" 
+  },
+  centered: { 
     flex: 1,
-    backgroundColor: 'white',
-  },
-  container: {
-    flex: 1,
-    backgroundColor: 'white',
-  },
-  listContainer: {
-    paddingTop: 8,
-    paddingBottom: 20,
-  },
-  friendItem: {
-    marginHorizontal: 16,
-    marginVertical: 4,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  friendContent: {
-    flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
-    padding: 16,
+    gap: 12,
   },
-  friendAvatar: {
+  loadingText: {
+    fontSize: 16,
+    color: '#666',
+  },
+  recipientRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 16,
+    backgroundColor: '#fff',
+  },
+  recipientInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  avatar: {
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: '#007AFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
+    marginRight: 15,
   },
-  friendAvatarText: {
-    color: 'white',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  friendInfo: {
+  // Phase 3: Group avatar styles removed - only individual friends supported
+  recipientDetails: {
     flex: 1,
   },
-  friendName: {
+  recipientName: {
     fontSize: 18,
     fontWeight: '600',
     color: '#333',
-    marginBottom: 2,
   },
-  friendEmail: {
+  recipientType: {
     fontSize: 14,
     color: '#666',
+    marginTop: 2,
+  },
+  separator: {
+    height: 1,
+    backgroundColor: '#f0f0f0',
+    marginLeft: 81, // Align with text content
   },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 40,
-    marginTop: 100,
+    paddingHorizontal: 32,
+    paddingTop: 100,
   },
   emptyText: {
-    fontSize: 16,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: 14,
     color: '#666',
     textAlign: 'center',
-    marginBottom: 20,
   },
-  addFriendButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
+  messagePreview: {
+    padding: 16,
+    backgroundColor: '#f8f9fa',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
   },
-  addFriendButtonText: {
-    color: 'white',
+  textPreview: {
+    marginBottom: 12,
+  },
+  previewLabel: {
     fontSize: 16,
     fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
   },
-});
-
-export default SelectFriendScreen; 
+  textContent: {
+    fontSize: 16,
+    color: '#1f2937',
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  mediaPreview: {
+    marginBottom: 12,
+  },
+  previewImage: {
+    width: '100%',
+    height: 150,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  videoPreview: {
+    width: '100%',
+    height: 150,
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  videoText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  ttlInfo: {
+    fontSize: 14,
+    color: '#6b7280',
+    fontWeight: '500',
+  },
+}); 

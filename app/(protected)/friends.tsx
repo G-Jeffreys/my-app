@@ -1,550 +1,490 @@
-import { View, Text, TouchableOpacity, FlatList, Alert, RefreshControl } from 'react-native';
-import React, { useState, useEffect } from 'react';
-import { Link } from 'expo-router';
-import { useAuth } from '../../store/useAuth';
-import { firestore } from '../../lib/firebase';
-import { Friend } from '../../models/firestore/friend';
-import { FriendRequest } from '../../models/firestore/friendRequest';
-import { User } from '../../models/firestore/user';
-import Header from '../../components/Header';
-import LoadingSpinner from '../../components/LoadingSpinner';
-import Toast from '../../components/Toast';
+import {
+  View,
+  Text,
+  FlatList,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+  Image,
+  RefreshControl,
+} from "react-native";
+import React, { useEffect, useState, useCallback } from "react";
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  doc,
+  writeBatch,
+  getDoc,
+} from "firebase/firestore";
+import { firestore, auth } from "../../lib/firebase";
+import { Auth } from "firebase/auth";
+import { User } from "../../models/firestore/user";
+import { Friend } from "../../models/firestore/friend";
+import { FriendRequest } from "../../models/firestore/friendRequest";
+import Header from "../../components/Header";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect, useRouter } from "expo-router";
 
-interface FriendWithUserData extends Friend {
-  userData?: User;
-}
-
-interface FriendRequestWithUserData extends FriendRequest {
-  senderData?: User;
-}
-
-const FriendsScreen = () => {
-  const { user } = useAuth();
-  const [friends, setFriends] = useState<FriendWithUserData[]>([]);
-  const [incomingRequests, setIncomingRequests] = useState<FriendRequestWithUserData[]>([]);
-  const [outgoingRequests, setOutgoingRequests] = useState<FriendRequestWithUserData[]>([]);
+export default function FriendsScreen() {
+  const router = useRouter();
+  const [friends, setFriends] = useState<User[]>([]);
+  const [requests, setRequests] = useState<FriendRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'friends' | 'incoming' | 'outgoing'>('friends');
-  const [toast, setToast] = useState<{message: string; type: 'success' | 'error' | 'info'; visible: boolean}>({
-    message: '',
-    type: 'info',
-    visible: false
-  });
 
-  const showToast = (message: string, type: 'success' | 'error' | 'info') => {
-    setToast({ message, type, visible: true });
-  };
+  console.log('[FriendsScreen] Component rendered');
 
-  const fetchFriends = async () => {
-    if (!user) return;
-    
-    console.log('[Friends] Fetching friends for user:', user.uid);
-    
-    try {
-      // Get friends list using the same pattern as select-friend
-      const friendsRef = firestore.collection('users').doc(user.uid).collection('friends');
-      
-      return new Promise<void>((resolve) => {
-        const unsubscribe = friendsRef.onSnapshot(async (friendsSnapshot: any) => {
-          console.log('[Friends] Found friends:', friendsSnapshot.docs.length);
-          
-          const friendsPromises = friendsSnapshot.docs.map(async (friendDoc: any) => {
-            const friendData = friendDoc.data() as Friend;
-            
-            // Get user data for each friend
-            const userRef = firestore.collection('users').doc(friendData.friendId);
-            const userSnapshot = await userRef.get();
-            
-            return {
-              ...friendData,
-              userData: userSnapshot.exists() ? userSnapshot.data() as User : undefined
-            } as FriendWithUserData;
-          });
-          
-          const friendsWithData = await Promise.all(friendsPromises);
-          setFriends(friendsWithData.filter((f: any) => f.userData));
-          unsubscribe(); // Clean up the listener after first load
-          resolve();
-        });
-      });
-      
-    } catch (error) {
-      console.error('[Friends] Error fetching friends:', error);
-      showToast('Error loading friends list', 'error');
+  const fetchData = useCallback(() => {
+    const currentUser = (auth as Auth).currentUser;
+    if (!currentUser) {
+      console.log('[FriendsScreen] No authenticated user');
+      return;
     }
-  };
+    
+    console.log('[FriendsScreen] Fetching friends and requests for user:', currentUser.uid);
+    setLoading(true);
 
-  const fetchFriendRequests = async () => {
-    if (!user) return;
-    
-    console.log('[Friends] Fetching friend requests for user:', user.uid);
-    
-    try {
-      // Get incoming requests
-      const incomingQuery = firestore.collection('friendRequests')
-        .where('recipientId', '==', user.uid)
-        .where('status', '==', 'pending');
-      
-      return new Promise<void>((resolve) => {
-        const unsubscribe = incomingQuery.onSnapshot(async (incomingSnapshot: any) => {
-          console.log('[Friends] Found incoming requests:', incomingSnapshot.docs.length);
-          
-          const incomingPromises = incomingSnapshot.docs.map(async (requestDoc: any) => {
-            const requestData = { id: requestDoc.id, ...requestDoc.data() } as FriendRequest;
-            
-            const senderRef = firestore.collection('users').doc(requestData.senderId);
-            const senderSnapshot = await senderRef.get();
-            
-            return {
-              ...requestData,
-              senderData: senderSnapshot.exists() ? senderSnapshot.data() as User : undefined
-            } as FriendRequestWithUserData;
-          });
-          
-          const incomingWithData = await Promise.all(incomingPromises);
-          setIncomingRequests(incomingWithData.filter((r: any) => r.senderData));
-          
-          // Now get outgoing requests
-          const outgoingQuery = firestore.collection('friendRequests')
-            .where('senderId', '==', user.uid)
-            .where('status', '==', 'pending');
-          
-          const unsubscribe2 = outgoingQuery.onSnapshot(async (outgoingSnapshot: any) => {
-            console.log('[Friends] Found outgoing requests:', outgoingSnapshot.docs.length);
-            
-            const outgoingPromises = outgoingSnapshot.docs.map(async (requestDoc: any) => {
-              const requestData = { id: requestDoc.id, ...requestDoc.data() } as FriendRequest;
-              
-              const recipientRef = firestore.collection('users').doc(requestData.recipientId);
-              const recipientSnapshot = await recipientRef.get();
-              
-              return {
-                ...requestData,
-                senderData: recipientSnapshot.exists() ? recipientSnapshot.data() as User : undefined
-              } as FriendRequestWithUserData;
-            });
-            
-            const outgoingWithData = await Promise.all(outgoingPromises);
-            setOutgoingRequests(outgoingWithData.filter((r: any) => r.senderData));
-            
-            unsubscribe2();
-            unsubscribe();
-            resolve();
-          });
-        });
-      });
-      
-    } catch (error) {
-      console.error('[Friends] Error fetching friend requests:', error);
-      showToast('Error loading friend requests', 'error');
-    }
-  };
-
-  const cleanupAcceptedRequests = async () => {
-    if (!user) return;
-    
-    console.log('[Friends] Checking for stuck accepted requests...');
-    
-    try {
-      // Find any requests with status 'accepted' that haven't been processed
-      const acceptedQuery = firestore.collection('friendRequests')
-        .where('status', '==', 'accepted');
-      
-      const acceptedSnapshot = await acceptedQuery.get();
-      console.log('[Friends] Found accepted requests to process:', acceptedSnapshot.docs.length);
-      
-      for (const requestDoc of acceptedSnapshot.docs) {
-        const requestData = requestDoc.data();
-        const requestId = requestDoc.id;
-        
-        // Only process requests involving current user
-        if (requestData.senderId === user.uid || requestData.recipientId === user.uid) {
-          console.log('[Friends] Processing stuck request:', requestId);
-          
-          try {
-            // Create friendship documents
-            const senderFriendRef = firestore.collection('users').doc(requestData.senderId).collection('friends').doc(requestData.recipientId);
-            const recipientFriendRef = firestore.collection('users').doc(requestData.recipientId).collection('friends').doc(requestData.senderId);
-            
-            await senderFriendRef.set({
-              friendId: requestData.recipientId,
-              addedAt: firestore.FieldValue.serverTimestamp(),
-            });
-            
-            await recipientFriendRef.set({
-              friendId: requestData.senderId,
-              addedAt: firestore.FieldValue.serverTimestamp(),
-            });
-            
-            // Delete the processed request
-            const requestRef = firestore.collection('friendRequests').doc(requestId);
-            await requestRef.delete();
-            
-            console.log('[Friends] ✅ Processed stuck request:', requestId);
-          } catch (error) {
-            console.error('[Friends] Error processing stuck request:', requestId, error);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[Friends] Error during cleanup:', error);
-    }
-  };
-
-  const refreshData = async () => {
-    setRefreshing(true);
-    try {
-      // First cleanup any stuck accepted requests
-      await cleanupAcceptedRequests();
-      
-      // Then load normal data
-      await Promise.all([fetchFriends(), fetchFriendRequests()]);
-    } catch (error) {
-      console.error('[Friends] Error refreshing data:', error);
-    }
-    setRefreshing(false);
-  };
-
-  const handleAcceptRequest = async (request: FriendRequestWithUserData) => {
-    if (!user) return;
-    
-    console.log('[Friends] Accepting friend request:', request.id);
-    console.log('[Friends] Request details:', { senderId: request.senderId, recipientId: request.recipientId });
-    
-    try {
-      // Update request status to accepted
-      const requestRef = firestore.collection('friendRequests').doc(request.id);
-      await requestRef.update({ 
-        status: 'accepted',
-        acceptedAt: firestore.FieldValue.serverTimestamp()
-      });
-      
-      console.log('[Friends] Friend request status updated to accepted');
-      
-      // FALLBACK: Manually create friendship if Cloud Function isn't working
-      // This ensures the UI works even if the backend function fails
-      console.log('[Friends] Creating friendship fallback...');
-      
-      const batch = firestore.collection('friendRequests').doc('temp'); // We need a reference for batching
-      
-      try {
-        // Create friend document for current user (recipient)
-        const myFriendRef = firestore.collection('users').doc(user.uid).collection('friends').doc(request.senderId);
-        await myFriendRef.set({
-          friendId: request.senderId,
-          addedAt: firestore.FieldValue.serverTimestamp(),
-        });
-        console.log('[Friends] Created friendship document for current user');
-        
-        // Create friend document for sender
-        const theirFriendRef = firestore.collection('users').doc(request.senderId).collection('friends').doc(user.uid);
-        await theirFriendRef.set({
-          friendId: user.uid,
-          addedAt: firestore.FieldValue.serverTimestamp(),
-        });
-        console.log('[Friends] Created friendship document for sender');
-        
-        // Delete the processed request
-        await requestRef.delete();
-        console.log('[Friends] Deleted processed friend request');
-        
-        console.log('[Friends] ✅ Friendship created successfully via fallback mechanism');
-        
-      } catch (fallbackError) {
-        console.error('[Friends] ⚠️ Fallback friendship creation failed:', fallbackError);
-        // Don't throw - the Cloud Function might still process it
-      }
-      
-      showToast(`You are now friends with ${request.senderData?.displayName || 'this user'}! 🎉`, 'success');
-      
-      // Refresh data to show updated lists
-      console.log('[Friends] Refreshing data to show updated friendship...');
-      await refreshData();
-      
-    } catch (error: any) {
-      console.error('[Friends] Error accepting friend request:', error);
-      console.error('[Friends] Error details:', {
-        message: error?.message || 'Unknown error',
-        code: error?.code || 'No error code'
-      });
-      showToast('Error accepting friend request', 'error');
-    }
-  };
-
-  const handleDeclineRequest = async (request: FriendRequestWithUserData) => {
-    console.log('[Friends] Declining friend request:', request.id);
-    
-    try {
-      // Update request status to declined
-      const requestRef = firestore.collection('friendRequests').doc(request.id);
-      await requestRef.update({ status: 'declined' });
-      
-      console.log('[Friends] Friend request declined successfully');
-      showToast('Friend request declined', 'info');
-      
-      // Refresh data to show updated lists
-      await refreshData();
-      
-    } catch (error) {
-      console.error('[Friends] Error declining friend request:', error);
-      showToast('Error declining friend request', 'error');
-    }
-  };
-
-  const handleCancelRequest = async (request: FriendRequestWithUserData) => {
-    console.log('[Friends] Canceling friend request:', request.id);
-    
-    try {
-      // Delete the request
-      const requestRef = firestore.collection('friendRequests').doc(request.id);
-      await requestRef.delete();
-      
-      console.log('[Friends] Friend request canceled successfully');
-      showToast('Friend request canceled', 'info');
-      
-      // Refresh data to show updated lists
-      await refreshData();
-      
-    } catch (error) {
-      console.error('[Friends] Error canceling friend request:', error);
-      showToast('Error canceling friend request', 'error');
-    }
-  };
-
-  const handleRemoveFriend = async (friend: FriendWithUserData) => {
-    if (!user || !friend.userData) return;
-    
-    Alert.alert(
-      'Remove Friend',
-      `Are you sure you want to remove ${friend.userData.displayName || 'this user'} from your friends?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              console.log('[Friends] Removing friend:', friend.friendId);
-              
-              // Remove from both users' friends collections
-              const myFriendsRef = firestore.collection('users').doc(user.uid).collection('friends').doc(friend.friendId);
-              const theirFriendsRef = firestore.collection('users').doc(friend.friendId).collection('friends').doc(user.uid);
-              
-              await Promise.all([
-                myFriendsRef.delete(),
-                theirFriendsRef.delete()
-              ]);
-              
-              console.log('[Friends] Friend removed successfully');
-              showToast(`Removed ${friend.userData?.displayName || 'friend'} from your friends`, 'info');
-              
-              // Refresh data
-              await refreshData();
-              
-            } catch (error) {
-              console.error('[Friends] Error removing friend:', error);
-              showToast('Error removing friend', 'error');
-            }
-          }
-        }
-      ]
+    // Fetch friends
+    const friendsCollectionRef = collection(
+      firestore,
+      "users",
+      currentUser.uid,
+      "friends"
     );
-  };
-
-  useEffect(() => {
-    const loadData = async () => {
-      if (!user) return;
-      
-      setLoading(true);
-      try {
-        // First cleanup any stuck accepted requests
-        await cleanupAcceptedRequests();
-        
-        // Then load normal data
-        await Promise.all([fetchFriends(), fetchFriendRequests()]);
-      } catch (error) {
-        console.error('[Friends] Error loading initial data:', error);
-      }
+    const friendsUnsub = onSnapshot(friendsCollectionRef, async (snapshot) => {
+      console.log('[FriendsScreen] Friends snapshot received, docs count:', snapshot.size);
+      const friendPromises = snapshot.docs.map(async (friendDoc) => {
+        const friendData = friendDoc.data() as Friend;
+        const userSnap = await getDoc(
+          doc(firestore, "users", friendData.friendId)
+        );
+        return userSnap.exists()
+          ? ({ id: userSnap.id, ...userSnap.data() } as User)
+          : null;
+      });
+      const friendsList = (await Promise.all(friendPromises)).filter(
+        (f): f is User => f !== null
+      );
+      console.log('[FriendsScreen] Loaded friends:', friendsList.length);
+      setFriends(friendsList);
       setLoading(false);
-    };
-    
-    loadData();
-  }, [user]);
+      setRefreshing(false);
+    });
 
-  const renderFriend = ({ item }: { item: FriendWithUserData }) => (
-    <View className="flex-row items-center justify-between p-4 bg-gray-50 rounded-lg mb-2">
-      <View className="flex-1">
-        <Text className="text-lg font-semibold">{item.userData?.displayName || 'Unknown User'}</Text>
-        <Text className="text-gray-600 text-sm">{item.userData?.email}</Text>
-      </View>
-      <TouchableOpacity
-        onPress={() => handleRemoveFriend(item)}
-        className="bg-red-500 px-3 py-2 rounded-lg"
-      >
-        <Text className="text-white font-semibold text-sm">Remove</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const renderIncomingRequest = ({ item }: { item: FriendRequestWithUserData }) => (
-    <View className="flex-row items-center justify-between p-4 bg-blue-50 rounded-lg mb-2">
-      <View className="flex-1">
-        <Text className="text-lg font-semibold">{item.senderData?.displayName || 'Unknown User'}</Text>
-        <Text className="text-gray-600 text-sm">{item.senderData?.email}</Text>
-        <Text className="text-blue-600 text-xs mt-1">Wants to be your friend</Text>
-      </View>
-      <View className="flex-row gap-2">
-        <TouchableOpacity
-          onPress={() => handleAcceptRequest(item)}
-          className="bg-green-500 px-3 py-2 rounded-lg"
-        >
-          <Text className="text-white font-semibold text-sm">Accept</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => handleDeclineRequest(item)}
-          className="bg-gray-500 px-3 py-2 rounded-lg"
-        >
-          <Text className="text-white font-semibold text-sm">Decline</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
-  const renderOutgoingRequest = ({ item }: { item: FriendRequestWithUserData }) => (
-    <View className="flex-row items-center justify-between p-4 bg-yellow-50 rounded-lg mb-2">
-      <View className="flex-1">
-        <Text className="text-lg font-semibold">{item.senderData?.displayName || 'Unknown User'}</Text>
-        <Text className="text-gray-600 text-sm">{item.senderData?.email}</Text>
-        <Text className="text-yellow-600 text-xs mt-1">Request pending</Text>
-      </View>
-      <TouchableOpacity
-        onPress={() => handleCancelRequest(item)}
-        className="bg-red-500 px-3 py-2 rounded-lg"
-      >
-        <Text className="text-white font-semibold text-sm">Cancel</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  if (loading) {
-    return (
-      <View className="flex-1 bg-white">
-        <Header title="Friends" showHomeButton={true} />
-        <LoadingSpinner text="Loading friends..." overlay={false} />
-      </View>
+    // Fetch incoming friend requests
+    const requestsQuery = query(
+      collection(firestore, "friendRequests"),
+      where("recipientId", "==", auth.currentUser.uid),
+      where("status", "==", "pending")
     );
-  }
+    const requestsUnsub = onSnapshot(requestsQuery, (snapshot) => {
+      console.log('[FriendsScreen] Friend requests snapshot received, docs count:', snapshot.size);
+      const requestsList = snapshot.docs.map(
+        (doc) => ({ id: doc.id, ...doc.data() } as FriendRequest)
+      );
+      console.log('[FriendsScreen] Loaded requests:', requestsList.length);
+      setRequests(requestsList);
+    });
+
+    return () => {
+      console.log('[FriendsScreen] Cleaning up listeners');
+      friendsUnsub();
+      requestsUnsub();
+    };
+  }, []);
+
+  useFocusEffect(fetchData);
+
+  const handleRefresh = useCallback(() => {
+    console.log('[FriendsScreen] Manual refresh triggered');
+    setRefreshing(true);
+    fetchData();
+  }, [fetchData]);
+
+  const handleAcceptRequest = async (request: FriendRequest) => {
+    if (!auth.currentUser) return;
+    
+    console.log('[FriendsScreen] Accepting friend request from:', request.senderId);
+    try {
+      const batch = writeBatch(firestore);
+
+      // 1. Add friend to current user's friend list
+      const currentUserFriendRef = doc(
+        firestore,
+        "users",
+        auth.currentUser.uid,
+        "friends",
+        request.senderId
+      );
+      batch.set(currentUserFriendRef, {
+        friendId: request.senderId,
+        addedAt: new Date(),
+      });
+
+      // 2. Add current user to sender's friend list
+      const senderFriendRef = doc(
+        firestore,
+        "users",
+        request.senderId,
+        "friends",
+        auth.currentUser.uid
+      );
+      batch.set(senderFriendRef, {
+        friendId: auth.currentUser.uid,
+        addedAt: new Date(),
+      });
+
+      // 3. Update the friend request status to 'accepted'
+      const requestRef = doc(firestore, "friendRequests", request.id);
+      batch.update(requestRef, { status: "accepted" });
+
+      await batch.commit();
+      console.log('[FriendsScreen] Friend request accepted successfully');
+      Alert.alert("Success", "Friend request accepted!");
+    } catch (error) {
+      console.error("[FriendsScreen] Error accepting friend request:", error);
+      Alert.alert("Error", "Failed to accept friend request.");
+    }
+  };
+  
+  const handleDeclineRequest = async (request: FriendRequest) => {
+    console.log('[FriendsScreen] Declining friend request from:', request.senderId);
+    try {
+        const requestRef = doc(firestore, "friendRequests", request.id);
+        const batch = writeBatch(firestore);
+        batch.update(requestRef, { status: "declined" });
+        await batch.commit();
+        console.log('[FriendsScreen] Friend request declined successfully');
+        Alert.alert("Success", "Friend request declined.");
+    } catch(e) {
+        console.error("[FriendsScreen] Error declining friend request:", e);
+        Alert.alert("Error", "Failed to decline friend request.");
+    }
+  };
+
+  const handleAddFriend = () => {
+    console.log('[FriendsScreen] Navigating to add friend page');
+    router.push("/(protected)/add-friend");
+  };
+
+  const renderSectionHeader = (title: string) => (
+    <View style={styles.sectionHeaderContainer}>
+      <Text style={styles.sectionHeader}>{title}</Text>
+    </View>
+  );
+
+  const renderFriendRequest = (item: FriendRequest) => (
+    <View style={styles.requestRow}>
+      <View style={styles.requestInfo}>
+        <Text style={styles.requestTitle}>Friend Request</Text>
+        <Text style={styles.requestEmail}>{item.senderEmail}</Text>
+      </View>
+      <View style={styles.buttonGroup}>
+        <TouchableOpacity 
+          onPress={() => handleAcceptRequest(item)} 
+          style={[styles.actionButton, styles.acceptButton]}
+        >
+          <Text style={styles.actionButtonText}>Accept</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          onPress={() => handleDeclineRequest(item)} 
+          style={[styles.actionButton, styles.declineButton]}
+        >
+          <Text style={styles.actionButtonText}>Decline</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const renderFriend = (item: User) => (
+    <View style={styles.friendRow}>
+      <Image source={{ uri: item.photoURL || "" }} style={styles.avatar} />
+      <View style={styles.friendInfo}>
+        <Text style={styles.friendName}>{item.displayName}</Text>
+        <Text style={styles.friendEmail}>{item.email}</Text>
+      </View>
+      <View style={styles.friendStatus}>
+        <Text style={styles.friendStatusText}>✓ Friend</Text>
+      </View>
+    </View>
+  );
+
+  const renderItem = ({ item }: { item: FriendRequest | User }) => {
+    if ("status" in item) {
+      return renderFriendRequest(item);
+    } else {
+      return renderFriend(item);
+    }
+  };
+
+  const combinedData = [...requests, ...friends];
+
+  // Header with add friend button
+  const rightComponent = (
+    <TouchableOpacity 
+      onPress={handleAddFriend}
+      style={styles.addButton}
+      accessibilityLabel="Add friend"
+      accessibilityRole="button"
+    >
+      <Text style={styles.addButtonText}>➕</Text>
+    </TouchableOpacity>
+  );
 
   return (
-    <View className="flex-1 bg-white">
+    <SafeAreaView style={styles.container}>
       <Header 
         title="Friends" 
-        showHomeButton={true}
-        rightComponent={
-          <Link href="/(protected)/add-friend" asChild>
-            <TouchableOpacity className="bg-blue-500 px-3 py-2 rounded-lg">
-              <Text className="text-white font-bold text-sm">+ Add</Text>
-            </TouchableOpacity>
-          </Link>
-        }
+        showBackButton={true} 
+        rightComponent={rightComponent}
       />
       
-      {/* Tab Navigation */}
-      <View className="flex-row border-b border-gray-200">
-        <TouchableOpacity
-          className={`flex-1 py-3 ${activeTab === 'friends' ? 'border-b-2 border-blue-500' : ''}`}
-          onPress={() => setActiveTab('friends')}
-        >
-          <Text className={`text-center font-semibold ${activeTab === 'friends' ? 'text-blue-500' : 'text-gray-600'}`}>
-            Friends ({friends.length})
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          className={`flex-1 py-3 ${activeTab === 'incoming' ? 'border-b-2 border-blue-500' : ''}`}
-          onPress={() => setActiveTab('incoming')}
-        >
-          <Text className={`text-center font-semibold ${activeTab === 'incoming' ? 'text-blue-500' : 'text-gray-600'}`}>
-            Requests ({incomingRequests.length})
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          className={`flex-1 py-3 ${activeTab === 'outgoing' ? 'border-b-2 border-blue-500' : ''}`}
-          onPress={() => setActiveTab('outgoing')}
-        >
-          <Text className={`text-center font-semibold ${activeTab === 'outgoing' ? 'text-blue-500' : 'text-gray-600'}`}>
-            Sent ({outgoingRequests.length})
-          </Text>
-        </TouchableOpacity>
+      {/* Summary Stats */}
+      <View style={styles.statsContainer}>
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>{friends.length}</Text>
+          <Text style={styles.statLabel}>Friends</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>{requests.length}</Text>
+          <Text style={styles.statLabel}>Requests</Text>
+        </View>
       </View>
 
-      {/* Content */}
-      <View className="flex-1 p-4">
-        {activeTab === 'friends' && (
-          <FlatList
-            data={friends}
-            keyExtractor={(item) => item.friendId}
-            renderItem={renderFriend}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshData} />}
-            ListEmptyComponent={() => (
-              <View className="flex-1 justify-center items-center py-8">
-                <Text className="text-xl font-semibold mb-2">👥 No Friends Yet</Text>
-                <Text className="text-gray-500 text-center mb-4">
-                  Start adding friends to send them snaps!
-                </Text>
-                <Link href="/(protected)/add-friend" asChild>
-                  <TouchableOpacity className="bg-blue-500 px-6 py-3 rounded-lg">
-                    <Text className="text-white font-semibold">Add Your First Friend</Text>
-                  </TouchableOpacity>
-                </Link>
+      {loading && !refreshing ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading friends...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={combinedData}
+          keyExtractor={(item) => (item as any).id}
+          renderItem={renderItem}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              colors={["#007AFF"]}
+              tintColor="#007AFF"
+            />
+          }
+          ListHeaderComponent={
+            combinedData.length > 0 ? (
+              <View>
+                {requests.length > 0 && renderSectionHeader("Pending Requests")}
+                {friends.length > 0 && renderSectionHeader("My Friends")}
               </View>
-            )}
-          />
-        )}
-
-        {activeTab === 'incoming' && (
-          <FlatList
-            data={incomingRequests}
-            keyExtractor={(item) => item.id}
-            renderItem={renderIncomingRequest}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshData} />}
-            ListEmptyComponent={() => (
-              <View className="flex-1 justify-center items-center py-8">
-                <Text className="text-xl font-semibold mb-2">📨 No Incoming Requests</Text>
-                <Text className="text-gray-500 text-center">
-                  When someone sends you a friend request, it will appear here.
-                </Text>
-              </View>
-            )}
-          />
-        )}
-
-        {activeTab === 'outgoing' && (
-          <FlatList
-            data={outgoingRequests}
-            keyExtractor={(item) => item.id}
-            renderItem={renderOutgoingRequest}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshData} />}
-            ListEmptyComponent={() => (
-              <View className="flex-1 justify-center items-center py-8">
-                <Text className="text-xl font-semibold mb-2">📤 No Outgoing Requests</Text>
-                <Text className="text-gray-500 text-center">
-                  Friend requests you send will appear here while pending.
-                </Text>
-              </View>
-            )}
-          />
-        )}
-      </View>
-
-      <Toast
-        message={toast.message}
-        type={toast.type}
-        visible={toast.visible}
-        onDismiss={() => setToast(prev => ({ ...prev, visible: false }))}
-      />
-    </View>
+            ) : null
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyIcon}>👥</Text>
+              <Text style={styles.emptyText}>No friends yet</Text>
+              <Text style={styles.emptySubtext}>
+                Start connecting with people by adding your first friend!
+              </Text>
+              <TouchableOpacity style={styles.emptyButton} onPress={handleAddFriend}>
+                <Text style={styles.emptyButtonText}>Add Your First Friend</Text>
+              </TouchableOpacity>
+            </View>
+          }
+          contentContainerStyle={combinedData.length === 0 ? styles.emptyList : styles.list}
+        />
+      )}
+    </SafeAreaView>
   );
-};
+}
 
-export default FriendsScreen; 
+const styles = StyleSheet.create({
+  container: { 
+    flex: 1, 
+    backgroundColor: 'white' 
+  },
+  addButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#3b82f6',
+  },
+  addButtonText: {
+    fontSize: 20,
+    color: '#fff',
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#f8f9fa',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  statItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#1f2937',
+  },
+  statLabel: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginTop: 4,
+  },
+  statDivider: {
+    width: 1,
+    backgroundColor: '#d1d5db',
+    marginHorizontal: 20,
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#6b7280',
+    marginTop: 12,
+  },
+  list: {
+    paddingHorizontal: 16,
+  },
+  emptyList: {
+    flex: 1,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  emptyIcon: {
+    fontSize: 64,
+    marginBottom: 16,
+  },
+  emptyText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#1f2937',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: 16,
+    color: '#6b7280',
+    textAlign: 'center',
+    marginBottom: 32,
+    lineHeight: 24,
+  },
+  emptyButton: {
+    backgroundColor: '#3b82f6',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  emptyButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  sectionHeaderContainer: {
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  sectionHeader: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#374151',
+  },
+  friendRow: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    padding: 16, 
+    borderBottomWidth: 1, 
+    borderBottomColor: '#f3f4f6',
+    backgroundColor: '#fff',
+  },
+  requestRow: { 
+    padding: 16, 
+    borderBottomWidth: 1, 
+    borderBottomColor: '#f3f4f6', 
+    backgroundColor: '#fffbeb',
+    borderLeftWidth: 4,
+    borderLeftColor: '#f59e0b',
+  },
+  avatar: { 
+    width: 50, 
+    height: 50, 
+    borderRadius: 25, 
+    marginRight: 16,
+    backgroundColor: '#f3f4f6',
+  },
+  friendInfo: {
+    flex: 1,
+  },
+  friendName: { 
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 2,
+  },
+  friendEmail: {
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  friendStatus: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#d1fae5',
+  },
+  friendStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#065f46',
+  },
+  requestInfo: {
+    marginBottom: 12,
+  },
+  requestTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 4,
+  },
+  requestEmail: {
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  buttonGroup: { 
+    flexDirection: 'row', 
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  actionButton: { 
+    paddingVertical: 8, 
+    paddingHorizontal: 16, 
+    borderRadius: 6,
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  acceptButton: { 
+    backgroundColor: '#22c55e' 
+  },
+  declineButton: { 
+    backgroundColor: '#ef4444' 
+  },
+  actionButtonText: { 
+    color: 'white', 
+    fontWeight: '600',
+    fontSize: 14,
+  },
+});

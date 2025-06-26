@@ -4,11 +4,13 @@ export type FirestoreTimestamp = {
   nanoseconds: number;
 } | Date;
 
+import { TtlPreset } from '../../config/messaging';
+
 export interface User {
   id: string; // Corresponds to Firebase Auth UID
   displayName: string;
   email: string | null;
   photoURL: string | null;
   createdAt: FirestoreTimestamp;
-  defaultTtl?: string; // Optional default TTL setting for messages
+  defaultTtl?: TtlPreset; // Optional default TTL setting for messages
 } 

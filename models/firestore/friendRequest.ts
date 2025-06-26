@@ -10,6 +10,7 @@ export interface FriendRequest {
   id: string;
   senderId: string;
   recipientId: string;
+  senderEmail?: string;
   status: FriendRequestStatus;
   createdAt: FirestoreTimestamp;
 } 

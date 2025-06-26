@@ -1,701 +1,829 @@
-import { StyleSheet, Text, View, Button, TouchableOpacity, Alert } from 'react-native';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useFocusEffect, router } from 'expo-router';
-import { Platform } from 'react-native';
+import {
+  CameraView,
+  useCameraPermissions,
+  useMicrophonePermissions,
+} from "expo-camera";
+import { useRouter } from "expo-router";
+import { useEffect, useRef, useState, useCallback } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  Platform,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Header from '../../components/Header';
 
-// Import vision camera components at the top level for mobile
-let Camera: any = null;
-let useCameraDevice: any = null;
-let useCameraPermission: any = null;
-
-// Only load react-native-vision-camera on mobile platforms
-if (Platform.OS !== 'web') {
-  try {
-    const VisionCamera = require('react-native-vision-camera');
-    Camera = VisionCamera.Camera;
-    useCameraDevice = VisionCamera.useCameraDevice;
-    useCameraPermission = VisionCamera.useCameraPermission;
-    console.log('[Camera] VisionCamera modules loaded successfully');
-  } catch (error) {
-    console.error('[Camera] Failed to load VisionCamera modules:', error);
-  }
-}
-
-const CameraScreen = () => {
-  const [isActive, setIsActive] = useState(false);
+export default function CameraScreen() {
+  const router = useRouter();
+  const [facing, setFacing] = useState<"front" | "back">("back");
   const [isRecording, setIsRecording] = useState(false);
-  const [hasPermission, setHasPermission] = useState<boolean | undefined>(undefined);
-  const [useMockCamera, setUseMockCamera] = useState(false);
-
-  // Vision Camera hooks - always call but handle safely
-  let cameraPermission: any = null;
-  try {
-    // Always call the hook if it exists, but handle the result based on platform
-    if (Platform.OS !== 'web' && useCameraPermission) {
-      cameraPermission = useCameraPermission();
-    }
-  } catch (error) {
-    console.error('[Camera] Error calling useCameraPermission hook:', error);
-    cameraPermission = null;
-  }
+  const [recordingTimeLeft, setRecordingTimeLeft] = useState(10);
+  const [permissionStatus, setPermissionStatus] = useState<'checking' | 'granted' | 'denied' | 'requesting'>('checking');
+  const [webStream, setWebStream] = useState<MediaStream | null>(null);
   
+  // Refs for different camera types
+  const cameraRef = useRef<CameraView>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [microphonePermission, requestMicrophonePermission] = useMicrophonePermissions();
+
+  console.log('[CameraScreen] Component rendered');
+  console.log('[CameraScreen] Platform:', Platform.OS);
+
+  // Web permission handling
+  const checkWebPermissions = async () => {
+    if (Platform.OS !== 'web') return true;
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: facing === 'front' ? 'user' : 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }, 
+        audio: true 
+      });
+      console.log('[CameraScreen] Web permissions granted, stream available');
+      
+      // Set up video element if available
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        setWebStream(stream);
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('[CameraScreen] Web permissions denied:', error);
+      return false;
+    }
+  };
+
+  // Setup web video stream
+  const setupWebVideo = async () => {
+    if (Platform.OS !== 'web' || !videoRef.current) return;
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { 
+          facingMode: facing === 'front' ? 'user' : 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }, 
+        audio: true 
+      });
+      
+      videoRef.current.srcObject = stream;
+      setWebStream(stream);
+      console.log('[CameraScreen] Web video stream setup complete');
+    } catch (error) {
+      console.error('[CameraScreen] Error setting up web video:', error);
+      setPermissionStatus('denied');
+    }
+  };
+
+  // Mobile permission handling
   useEffect(() => {
-    console.log('[Camera] Initializing camera permissions...');
+    console.log('[CameraScreen] Effect triggered - checking permissions');
     
     if (Platform.OS === 'web') {
-      // For web, we'll simulate having permission
-      console.log('[Camera] Web platform detected, simulating camera permission');
-      setHasPermission(true);
-    } else {
-      // For mobile, use the actual VisionCamera
-      const initializeCamera = async () => {
-        try {
-          console.log('[Camera] Checking camera permissions on mobile...');
-          
-          if (!cameraPermission) {
-            console.error('[Camera] Camera permission hook not available');
-            setHasPermission(false);
-            return;
-          }
-          
-          console.log('[Camera] Current permission status:', cameraPermission.hasPermission);
-          setHasPermission(cameraPermission.hasPermission);
-          
-          if (!cameraPermission.hasPermission) {
-            console.log('[Camera] Requesting camera permission...');
-            const granted = await cameraPermission.requestPermission();
-            console.log('[Camera] Permission request result:', granted);
-            setHasPermission(granted);
-          }
-        } catch (error) {
-          console.error('[Camera] Error initializing camera:', error);
-          setHasPermission(false);
-        }
-      };
-      
-      initializeCamera();
-    }
-  }, [cameraPermission]);
-
-  useFocusEffect(
-    useCallback(() => {
-      console.log('[Camera] Screen focused, activating camera');
-      setIsActive(true);
-      return () => {
-        console.log('[Camera] Screen unfocused, deactivating camera');
-        setIsActive(false);
-      };
-    }, [])
-  );
-
-  const onTakePicture = async () => {
-    if (isRecording) {
-      console.log('[Camera] Cannot take photo while recording');
+      // For web, we'll check permissions when user interacts
+      checkWebPermissions().then(granted => {
+        setPermissionStatus(granted ? 'granted' : 'denied');
+      });
       return;
     }
+
+    if (!cameraPermission || !microphonePermission) {
+      console.log('[CameraScreen] Permissions still loading...');
+      setPermissionStatus('checking');
+      return;
+    }
+
+    const cameraGranted = cameraPermission.granted;
+    const micGranted = microphonePermission.granted;
+    
+    console.log('[CameraScreen] Camera granted:', cameraGranted);
+    console.log('[CameraScreen] Microphone granted:', micGranted);
+
+    if (cameraGranted && micGranted) {
+      console.log('[CameraScreen] All permissions granted');
+      setPermissionStatus('granted');
+    } else {
+      console.log('[CameraScreen] Some permissions missing');
+      setPermissionStatus('denied');
+      
+      if (!cameraGranted || !micGranted) {
+        handleRequestPermissions();
+      }
+    }
+  }, [cameraPermission, microphonePermission]);
+
+  const handleRequestPermissions = async () => {
+    console.log('[CameraScreen] Requesting permissions...');
+    setPermissionStatus('requesting');
     
     try {
-      if (Platform.OS === 'web' || useMockCamera) {
-        // Mock photo capture for web or when camera fails
-        console.log('[Camera] Mock photo taken');
-        const mockPhotoPath = 'mock://photo.jpg';
-        router.push({
-          pathname: '/(protected)/preview',
-          params: { uri: mockPhotoPath, mediaType: 'photo' },
-        });
+      if (Platform.OS === 'web') {
+        const granted = await checkWebPermissions();
+        setPermissionStatus(granted ? 'granted' : 'denied');
+        
+        if (!granted) {
+          Alert.alert(
+            "Camera Access Required",
+            "Please allow camera and microphone access in your browser to use this feature. Look for the camera/microphone icon in your address bar or browser settings.",
+            [
+              {
+                text: "Try Again",
+                onPress: handleRequestPermissions,
+              },
+              {
+                text: "Go Back",
+                style: "cancel",
+                onPress: () => router.back(),
+              },
+            ]
+          );
+        }
       } else {
-        // For mobile, the actual photo taking will be handled by MobileCameraView
-        console.log('[Camera] Photo capture triggered - will be handled by mobile camera');
+        const cameraResult = await requestCameraPermission();
+        const micResult = await requestMicrophonePermission();
+        
+        console.log('[CameraScreen] Camera permission result:', cameraResult);
+        console.log('[CameraScreen] Microphone permission result:', micResult);
+        
+        if (cameraResult.granted && micResult.granted) {
+          console.log('[CameraScreen] All permissions granted after request');
+          setPermissionStatus('granted');
+        } else {
+          console.log('[CameraScreen] Some permissions still denied');
+          setPermissionStatus('denied');
+          
+          Alert.alert(
+            "Permissions Required",
+            "Camera and microphone access are required to take photos and videos. Please enable them in your device settings.",
+            [
+              {
+                text: "Try Again",
+                onPress: handleRequestPermissions,
+              },
+              {
+                text: "Go Back",
+                style: "cancel",
+                onPress: () => router.back(),
+              },
+            ]
+          );
+        }
+      }
+    } catch (error) {
+      console.error('[CameraScreen] Error requesting permissions:', error);
+      setPermissionStatus('denied');
+      Alert.alert(
+        "Permission Error", 
+        "There was an error requesting camera permissions. Please try again or check your browser/device settings."
+      );
+    }
+  };
+
+  const toggleCameraFacing = async () => {
+    console.log('[CameraScreen] Toggling camera facing');
+    const newFacing = facing === "back" ? "front" : "back";
+    setFacing(newFacing);
+    
+    if (Platform.OS === 'web' && webStream) {
+      // Stop current stream
+      webStream.getTracks().forEach(track => track.stop());
+      setWebStream(null);
+      
+      // Setup new stream with new facing mode
+      setTimeout(() => setupWebVideo(), 100);
+    }
+  };
+
+  // Setup web video when component mounts or facing changes
+  useEffect(() => {
+    if (Platform.OS === 'web' && permissionStatus === 'granted' && !webStream) {
+      setupWebVideo();
+    }
+  }, [facing, permissionStatus, webStream]);
+
+  // Web video recording functions
+  const startWebRecording = useCallback(async () => {
+    if (Platform.OS !== 'web' || !webStream) {
+      console.error('[CameraScreen] Web stream not available');
+      Alert.alert('Recording Error', 'Camera stream not available. Please refresh and try again.');
+      return;
+    }
+
+    try {
+      recordedChunksRef.current = [];
+      
+      console.log('[CameraScreen] Starting MediaRecorder with stream:', webStream);
+      
+      const mediaRecorder = new MediaRecorder(webStream, {
+        mimeType: 'video/webm'
+      });
+
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        console.log('[CameraScreen] Recording data available, size:', event.data.size);
+        if (event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        console.log('[CameraScreen] Recording stopped, chunks:', recordedChunksRef.current.length);
+        const blob = new Blob(recordedChunksRef.current, {
+          type: 'video/webm'
+        });
+        
+        // Create a data URL from the blob
+        const url = URL.createObjectURL(blob);
+        
+        console.log('[CameraScreen] Web recording completed, blob size:', blob.size);
+        
+        // Navigate to preview with the blob URL
+        router.push({
+          pathname: "/(protected)/preview",
+          params: { uri: url, type: "video" },
+        });
+      };
+
+      mediaRecorder.onerror = (event) => {
+        console.error('[CameraScreen] MediaRecorder error:', event);
+        Alert.alert('Recording Error', 'Failed to record video. Please try again.');
+        setIsRecording(false);
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingTimeLeft(10);
+
+      console.log('[CameraScreen] MediaRecorder started');
+
+      // Start countdown timer
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTimeLeft(prev => {
+          if (prev <= 1) {
+            stopWebRecording();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+    } catch (error) {
+      console.error('[CameraScreen] Error starting web recording:', error);
+      Alert.alert("Recording Error", "Failed to start recording. Please try again.");
+      setIsRecording(false);
+    }
+  }, [webStream, router]);
+
+  const stopWebRecording = useCallback(() => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    }
+  }, [isRecording]);
+
+  // Mobile video recording functions
+  const startMobileRecording = async () => {
+    if (Platform.OS === 'web' || !cameraRef.current) return;
+    
+    setIsRecording(true);
+    setRecordingTimeLeft(10);
+    
+    try {
+      const recordingPromise = cameraRef.current.recordAsync({
+        maxDuration: 10,
+      });
+      
+      // Start countdown timer
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTimeLeft(prev => {
+          if (prev <= 1) {
+            stopMobileRecording();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      
+      if (recordingPromise) {
+        const video = await recordingPromise;
+        console.log('[CameraScreen] Mobile recording completed:', video?.uri);
+        if (video) {
+          router.push({
+            pathname: "/(protected)/preview",
+            params: { uri: video.uri, type: "video" },
+          });
+        }
       }
     } catch (e) {
-      console.error('[Camera] Failed to take photo:', e);
-      Alert.alert('Error', 'Failed to take photo');
-    }
-  };
-
-  const onStartRecording = async () => {
-    console.log('[Camera] Recording start triggered');
-    
-    if (Platform.OS === 'web' || useMockCamera) {
-      // Mock video recording for web or when camera fails
-      console.log('[Camera] Mock video recording started');
-      setIsRecording(true);
-      
-      // Simulate 3 seconds of recording
-      setTimeout(() => {
-        console.log('[Camera] Mock video recording finished');
-        setIsRecording(false);
-        const mockVideoPath = 'mock://video.mp4';
-        router.push({
-          pathname: '/(protected)/preview',
-          params: { uri: mockVideoPath, mediaType: 'video' },
-        });
-      }, 3000);
-    } else {
-      // For mobile, the actual video recording will be handled by MobileCameraView
-      console.log('[Camera] Video recording triggered - will be handled by mobile camera');
-      setIsRecording(true);
-    }
-  };
-
-  const onStopRecording = async () => {
-    if ((Platform.OS !== 'web' && !useMockCamera) && isRecording) {
-      console.log('[Camera] Stopping video recording...');
+      console.error("[CameraScreen] Mobile recording failed:", e);
+      Alert.alert("Recording Error", "Failed to record video. Please try again.");
+    } finally {
       setIsRecording(false);
-      // The actual stop logic will be handled by MobileCameraView
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
     }
   };
 
-  const handleCameraError = () => {
-    console.log('[Camera] Switching to mock camera mode due to camera error');
-    setUseMockCamera(true);
+  const stopMobileRecording = () => {
+    if (Platform.OS === 'web' || !cameraRef.current) return;
+    
+    try {
+      cameraRef.current.stopRecording();
+    } catch (error) {
+      console.error('[CameraScreen] Error stopping mobile recording:', error);
+    }
   };
 
-  if (hasPermission === false) {
+  const takeWebPhoto = useCallback(async () => {
+    if (Platform.OS !== 'web' || !videoRef.current || !canvasRef.current) {
+      console.error('[CameraScreen] Video or canvas ref not available');
+      return;
+    }
+
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const context = canvas.getContext('2d');
+      
+      if (!context) {
+        console.error('[CameraScreen] Canvas context not available');
+        return;
+      }
+
+      // Set canvas dimensions to match video
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      
+      // Draw the current video frame to canvas
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      // Convert canvas to data URL
+      const imageSrc = canvas.toDataURL('image/jpeg', 0.8);
+      
+      if (imageSrc) {
+        console.log('[CameraScreen] Web photo taken, data URL length:', imageSrc.length);
+        router.push({
+          pathname: "/(protected)/preview",
+          params: { uri: imageSrc, type: "image" },
+        });
+      } else {
+        console.error('[CameraScreen] Failed to capture screenshot');
+        Alert.alert("Photo Error", "Failed to capture photo. Please try again.");
+      }
+    } catch (error) {
+      console.error('[CameraScreen] Error taking web photo:', error);
+      Alert.alert("Photo Error", "Failed to take photo. Please try again.");
+    }
+  }, [router]);
+
+  const takeMobilePhoto = async () => {
+    if (Platform.OS === 'web' || !cameraRef.current) return;
+    
+    try {
+      const photo = await cameraRef.current.takePictureAsync();
+      console.log('[CameraScreen] Mobile photo taken:', photo?.uri);
+      if (photo) {
+        router.push({
+          pathname: "/(protected)/preview",
+          params: { uri: photo.uri, type: "image" },
+        });
+      }
+    } catch (e) {
+      console.error("[CameraScreen] Failed to take mobile photo:", e);
+      Alert.alert("Photo Error", "Failed to take photo. Please try again.");
+    }
+  };
+
+  // Unified recording handlers
+  const handleTakePhoto = async () => {
+    if (isRecording) {
+      console.log('[CameraScreen] Cannot take photo while recording');
+      return;
+    }
+    
+    console.log('[CameraScreen] Taking photo');
+    
+    if (Platform.OS === 'web') {
+      await takeWebPhoto();
+    } else {
+      await takeMobilePhoto();
+    }
+  };
+
+  const handlePhotoButtonLongPress = () => {
+    console.log('[CameraScreen] Photo button long pressed - attempting video recording');
+    if (Platform.OS === 'web') {
+      startWebRecording();
+    } else {
+      startMobileRecording();
+    }
+  };
+
+  // Cleanup effect
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      if (webStream) {
+        webStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [webStream]);
+
+  console.log('[CameraScreen] Rendering with permission status:', permissionStatus);
+  console.log('[CameraScreen] Is recording:', isRecording);
+
+  // Loading state
+  if (permissionStatus === 'checking') {
     return (
-      <View style={styles.fullContainer}>
+      <SafeAreaView style={styles.container}>
         <Header title="Camera" showHomeButton={true} />
-        <View style={styles.container}>
-          <Text style={styles.permissionText}>Camera permission is required to use this feature.</Text>
-          <Button 
-            title="Grant Permission" 
-            onPress={() => {
-              if (Platform.OS === 'web') {
-                setHasPermission(true);
-              } else {
-                const initializeCamera = async () => {
-                  try {
-                    if (cameraPermission) {
-                      const granted = await cameraPermission.requestPermission();
-                      console.log('[Camera] Permission re-request result:', granted);
-                      setHasPermission(granted);
-                    }
-                  } catch (error) {
-                    console.error('[Camera] Error requesting permission:', error);
-                    setHasPermission(false);
-                  }
-                };
-                initializeCamera();
-              }
-            }} 
-          />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.statusText}>Checking camera permissions...</Text>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
-  if (hasPermission === undefined) {
+  // Requesting permissions state
+  if (permissionStatus === 'requesting') {
     return (
-      <View style={styles.fullContainer}>
+      <SafeAreaView style={styles.container}>
         <Header title="Camera" showHomeButton={true} />
-        <View style={styles.container}>
-          <Text style={styles.loadingText}>Requesting camera permission...</Text>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.statusText}>Requesting camera access...</Text>
+          <Text style={styles.statusSubtext}>
+            {Platform.OS === 'web' 
+              ? "Please allow camera access in your browser"
+              : "Please grant camera and microphone permissions"
+            }
+          </Text>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
+  // Permissions denied state
+  if (permissionStatus === 'denied') {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Header title="Camera" showHomeButton={true} />
+        <View style={styles.centered}>
+          <Text style={styles.permissionTitle}>Camera Access Required</Text>
+          <Text style={styles.permissionText}>
+            {Platform.OS === 'web'
+              ? "Please allow camera and microphone access in your browser to take photos and videos."
+              : "Camera and microphone permissions are required to take photos and videos."
+            }
+          </Text>
+          <TouchableOpacity style={styles.requestButton} onPress={handleRequestPermissions}>
+            <Text style={styles.requestButtonText}>Grant Permissions</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Camera interface - Platform specific rendering
   return (
-    <View style={styles.fullContainer}>
+    <SafeAreaView style={styles.container}>
       <Header title="Camera" showHomeButton={true} />
-      <View style={styles.container}>
-        {Platform.OS === 'web' || useMockCamera ? (
-          // Mock camera view for web or when real camera fails
-          <View style={[StyleSheet.absoluteFill, styles.mockCamera]}>
-            <Text style={styles.mockCameraText}>
-              {useMockCamera ? '📱 Emulator Camera Mode' : '📷 Mock Camera'}
-            </Text>
-            <Text style={styles.mockCameraSubtext}>
-              {useMockCamera 
-                ? 'Camera hardware not available in emulator. Using mock mode.'
-                : 'Camera preview not available on web'
-              }
-            </Text>
-            {isRecording && (
-              <Text style={[styles.mockCameraSubtext, { color: 'red', marginTop: 20 }]}>
-                🔴 Recording... ({useMockCamera ? 'Mock' : 'Simulated'})
-              </Text>
-            )}
+      {Platform.OS === 'web' ? (
+        // Web implementation with native HTML5 video
+        <View style={styles.camera}>
+          <video
+            ref={(ref) => { videoRef.current = ref; }}
+            autoPlay
+            playsInline
+            muted
+            style={styles.webVideo}
+            onLoadedMetadata={() => {
+              console.log('[CameraScreen] Video metadata loaded');
+            }}
+            onError={(error) => {
+              console.error('[CameraScreen] Video error:', error);
+            }}
+          />
+          
+          {/* Hidden canvas for photo capture */}
+          <canvas
+            ref={(ref) => { canvasRef.current = ref; }}
+            style={{ display: 'none' }}
+          />
+          
+          {/* Web controls overlay */}
+          <View style={styles.webControlsBar}>
+            <TouchableOpacity style={styles.controlButton} onPress={toggleCameraFacing}>
+              <Text style={styles.controlText}>🔄 Flip</Text>
+            </TouchableOpacity>
             
-            {/* Mock camera controls */}
-            <View style={styles.buttonContainer}>
-              <TouchableOpacity 
-                style={styles.captureButton} 
-                onPress={onTakePicture}
-                disabled={isRecording}
-              >
-                <Text style={styles.buttonText}>📷</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.captureButton, { marginTop: 10 }]} 
-                onPress={isRecording ? onStopRecording : onStartRecording}
-              >
-                <Text style={styles.buttonText}>{isRecording ? '⏹️' : '🎥'}</Text>
+            <TouchableOpacity 
+              style={styles.photoButton} 
+              onPress={handleTakePhoto}
+              onLongPress={handlePhotoButtonLongPress}
+              disabled={isRecording}
+            >
+              <Text style={styles.controlText}>📷 Photo</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[
+                styles.recordButton,
+                isRecording && styles.recordButtonActive,
+              ]}
+              onPress={isRecording ? stopWebRecording : startWebRecording}
+            >
+              <Text style={styles.controlText}>
+                {isRecording ? `⏹️ Stop (${recordingTimeLeft}s)` : '🔴 Record'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          
+          {isRecording && (
+            <View style={styles.recordingIndicator}>
+              <View style={styles.recordingDot} />
+              <Text style={styles.recordingText}>Recording... {recordingTimeLeft}s left</Text>
+            </View>
+          )}
+        </View>
+      ) : (
+        // Mobile implementation with expo-camera
+        <CameraView
+          ref={cameraRef}
+          style={styles.camera}
+          facing={facing}
+          videoQuality={"720p"}
+        >
+          <View style={styles.cameraOverlay}>
+            <View style={styles.topControls}>
+              <TouchableOpacity style={styles.controlButton} onPress={toggleCameraFacing}>
+                <Text style={styles.controlText}>🔄 Flip</Text>
               </TouchableOpacity>
             </View>
+            
+            <View style={styles.bottomControls}>
+              <TouchableOpacity 
+                style={styles.photoButton} 
+                onPress={handleTakePhoto}
+                onLongPress={handlePhotoButtonLongPress}
+                disabled={isRecording}
+              >
+                <Text style={styles.controlText}>📷</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[
+                  styles.recordButton,
+                  isRecording && styles.recordButtonActive,
+                ]}
+                onPress={isRecording ? stopMobileRecording : startMobileRecording}
+              >
+                <View style={[
+                  styles.recordButtonInner,
+                  isRecording && styles.recordButtonInnerActive,
+                ]} />
+                {isRecording && (
+                  <Text style={styles.recordingLabel}>Recording... {recordingTimeLeft}s</Text>
+                )}
+              </TouchableOpacity>
+              
+              <View style={styles.placeholder} />
+            </View>
+            
+            {isRecording && (
+              <View style={styles.recordingIndicator}>
+                <View style={styles.recordingDot} />
+                <Text style={styles.recordingText}>Recording... {recordingTimeLeft}s left</Text>
+              </View>
+            )}
           </View>
-        ) : (
-          // Real mobile camera
-          <MobileCameraView 
-            isActive={isActive}
-            isRecording={isRecording}
-            onTakePicture={onTakePicture}
-            onStartRecording={onStartRecording}
-            onStopRecording={onStopRecording}
-            setIsRecording={setIsRecording}
-            onCameraError={handleCameraError}
-          />
-        )}
-      </View>
-    </View>
+        </CameraView>
+      )}
+    </SafeAreaView>
   );
-};
-
-// Separate component for mobile camera to isolate VisionCamera usage
-const MobileCameraView = ({ 
-  isActive, 
-  isRecording, 
-  onTakePicture, 
-  onStartRecording, 
-  onStopRecording, 
-  setIsRecording, 
-  onCameraError
-}: {
-  isActive: boolean;
-  isRecording: boolean;
-  onTakePicture: () => void;
-  onStartRecording: () => void;
-  onStopRecording: () => void;
-  setIsRecording: (recording: boolean) => void;
-  onCameraError: () => void;
-}) => {
-  const camera = useRef<any>(null);
-  const [device, setDevice] = useState<any>(null);
-  const [cameraFormat, setCameraFormat] = useState<any>(null);
-  const [cameraError, setCameraError] = useState<string | null>(null);
-
-  // Use the useCameraDevice hook - try both back and front
-  const backDevice = useCameraDevice ? useCameraDevice('back') : null;
-  const frontDevice = useCameraDevice ? useCameraDevice('front') : null;
-
-  useEffect(() => {
-    console.log('[MobileCameraView] Initializing camera device...');
-    console.log('[MobileCameraView] Back device available:', !!backDevice);
-    console.log('[MobileCameraView] Front device available:', !!frontDevice);
-    
-    // Prefer back camera, but use front as fallback
-    const selectedDevice = backDevice || frontDevice;
-    
-    if (selectedDevice) {
-      console.log('[MobileCameraView] Selected device:', selectedDevice.id);
-      console.log('[MobileCameraView] Device position:', selectedDevice.position);
-      console.log('[MobileCameraView] Available formats:', selectedDevice.formats?.length || 0);
-      
-      // For Android emulators, we'll use the simplest possible configuration
-      // Don't set any format - let the camera use its default
-      console.log('[MobileCameraView] Using default camera format for better emulator compatibility');
-      
-      setDevice(selectedDevice);
-      setCameraFormat(null); // Use default format
-      setCameraError(null);
-    } else {
-      console.log('[MobileCameraView] No camera devices found');
-      setCameraError('No camera devices available');
-    }
-  }, [backDevice, frontDevice]);
-
-  // Handle actual photo taking for mobile
-  const handleTakePhoto = async () => {
-    console.log('[MobileCameraView] Taking photo...');
-    
-    if (!camera.current) {
-      console.error('[MobileCameraView] Camera ref not available');
-      Alert.alert('Error', 'Camera not ready');
-      return;
-    }
-    
-    if (!device) {
-      console.error('[MobileCameraView] No camera device available');
-      Alert.alert('Error', 'No camera device available');
-      return;
-    }
-    
-    try {
-      console.log('[MobileCameraView] Attempting photo capture...');
-      
-      // Create a timeout promise to prevent hanging
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => {
-          reject(new Error('Photo capture timeout - switching to mock mode'));
-        }, 5000); // 5 second timeout
-      });
-      
-      // Use the most basic photo capture settings for emulator compatibility
-      const photoPromise = camera.current.takePhoto({
-        qualityPrioritization: 'speed',
-        flash: 'off',
-        enableAutoRedEyeReduction: false,
-        enableShutterSound: false,
-        // Remove any format-specific settings that might cause issues
-      });
-      
-      console.log('[MobileCameraView] Waiting for photo capture or timeout...');
-      const photo = await Promise.race([photoPromise, timeoutPromise]);
-      
-      console.log('[MobileCameraView] Photo taken successfully:', photo.path);
-      
-      router.push({
-        pathname: '/(protected)/preview',
-        params: { uri: 'file://' + photo.path, mediaType: 'photo' },
-      });
-    } catch (error: any) {
-      console.error('[MobileCameraView] Failed to take photo:', error);
-      
-      // If it's a timeout or camera hardware issue, switch to mock mode
-      if (error.message?.includes('timeout') || 
-          error.message?.includes('session/invalid-output-configuration') ||
-          error.message?.includes('Template ID') ||
-          error.code?.includes('session/invalid-output-configuration')) {
-        console.log('[MobileCameraView] Camera hardware issue detected, switching to mock mode');
-        onCameraError();
-      } else {
-        Alert.alert('Error', `Failed to take photo: ${error.message || error}`);
-      }
-    }
-  };
-
-  // Handle actual video recording for mobile
-  const handleStartRecording = async () => {
-    console.log('[MobileCameraView] Starting video recording...');
-    
-    if (!camera.current) {
-      console.error('[MobileCameraView] Camera ref not available');
-      Alert.alert('Error', 'Camera not ready');
-      return;
-    }
-    
-    if (!device) {
-      console.error('[MobileCameraView] No camera device available');
-      Alert.alert('Error', 'No camera device available');
-      return;
-    }
-    
-    try {
-      console.log('[MobileCameraView] Attempting video recording...');
-      
-      // Create a timeout for video recording start
-      const startTimeout = setTimeout(() => {
-        console.error('[MobileCameraView] Video recording start timeout');
-        setIsRecording(false);
-        onCameraError();
-      }, 3000); // 3 second timeout for starting
-      
-      camera.current.startRecording({
-        flash: 'off',
-        // Use minimal settings for emulator compatibility
-        onRecordingFinished: (video: any) => {
-          clearTimeout(startTimeout);
-          console.log('[MobileCameraView] Video recorded successfully:', video.path);
-          setIsRecording(false);
-          router.push({
-            pathname: '/(protected)/preview',
-            params: { uri: 'file://' + video.path, mediaType: 'video' },
-          });
-        },
-        onRecordingError: (error: any) => {
-          clearTimeout(startTimeout);
-          console.error('[MobileCameraView] Video recording error:', error);
-          setIsRecording(false);
-          
-          // If it's a camera hardware issue, switch to mock mode
-          if (error.message?.includes('session/invalid-output-configuration') || 
-              error.message?.includes('Template ID') ||
-              error.message?.includes('camera') ||
-              error.code?.includes('session/invalid-output-configuration')) {
-            console.log('[MobileCameraView] Video recording hardware issue, switching to mock mode');
-            onCameraError();
-          } else {
-            Alert.alert('Error', `Video recording failed: ${error.message || error}`);
-          }
-        },
-      });
-      
-      // Clear timeout if recording starts successfully
-      setTimeout(() => {
-        clearTimeout(startTimeout);
-        console.log('[MobileCameraView] Video recording started successfully');
-      }, 500);
-      
-      console.log('[MobileCameraView] Video recording initiated');
-      
-      // Auto-stop after 10 seconds for safety
-      setTimeout(() => {
-        if (isRecording) {
-          console.log('[MobileCameraView] Auto-stopping video recording after 10 seconds');
-          handleStopRecording();
-        }
-      }, 10000);
-      
-    } catch (error: any) {
-      console.error('[MobileCameraView] Failed to start video recording:', error);
-      setIsRecording(false);
-      
-      // If it's a camera hardware issue, switch to mock mode
-      if (error.message?.includes('session/invalid-output-configuration') || 
-          error.message?.includes('Template ID') ||
-          error.code?.includes('session/invalid-output-configuration')) {
-        console.log('[MobileCameraView] Video recording hardware issue, switching to mock mode');
-        onCameraError();
-      } else {
-        Alert.alert('Error', `Failed to start video recording: ${error.message || error}`);
-      }
-    }
-  };
-
-  const handleStopRecording = async () => {
-    if (camera.current && isRecording) {
-      try {
-        console.log('[MobileCameraView] Stopping video recording...');
-        await camera.current.stopRecording();
-        console.log('[MobileCameraView] Video recording stopped');
-      } catch (error: any) {
-        console.error('[MobileCameraView] Error stopping video recording:', error);
-        setIsRecording(false);
-      }
-    }
-  };
-
-  const onCameraInitialized = () => {
-    console.log('[MobileCameraView] Camera initialized successfully');
-  };
-
-  const onCameraErrorHandler = (error: any) => {
-    console.error('[MobileCameraView] Camera error:', error);
-    
-    // Check for specific emulator-related errors
-    if (error.message?.includes('session/invalid-output-configuration') ||
-        error.message?.includes('Template ID') ||
-        error.code?.includes('session/invalid-output-configuration')) {
-      console.log('[MobileCameraView] Detected emulator camera configuration issue, switching to mock mode');
-      onCameraError();
-    } else {
-      setCameraError(error.message || 'Camera error occurred');
-    }
-  };
-
-  if (cameraError) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.errorText}>Camera Error: {cameraError}</Text>
-        <TouchableOpacity style={styles.button} onPress={() => setCameraError(null)}>
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  if (!device) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.loadingText}>Loading camera...</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.container}>
-      <Camera
-        ref={camera}
-        style={StyleSheet.absoluteFill}
-        device={device}
-        isActive={isActive}
-        photo={true}
-        video={true}
-        audio={false} // Disable audio for better emulator compatibility
-        // Don't set format - use default for better compatibility
-        // format={cameraFormat}
-        onInitialized={onCameraInitialized}
-        onError={onCameraErrorHandler}
-      />
-      
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity 
-          style={[styles.captureButton, isRecording && styles.recordingButton]} 
-          onPress={isRecording ? handleStopRecording : handleTakePhoto}
-        >
-          <Text style={styles.captureButtonText}>
-            {isRecording ? 'Stop' : 'Take Photo'}
-          </Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.videoButton} 
-          onPress={isRecording ? handleStopRecording : handleStartRecording}
-        >
-          <Text style={styles.videoButtonText}>
-            {isRecording ? 'Stop Video' : 'Record Video'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-};
+}
 
 const styles = StyleSheet.create({
-  fullContainer: {
-    flex: 1,
-    backgroundColor: 'white',
-  },
   container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#000",
   },
-  mockCamera: {
-    backgroundColor: '#f0f0f0',
-    justifyContent: 'center',
-    alignItems: 'center',
+  centered: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 20,
   },
-  mockCameraText: {
+  statusText: {
+    fontSize: 18,
+    color: "#333",
+    marginTop: 16,
+    textAlign: "center",
+  },
+  statusSubtext: {
+    fontSize: 14,
+    color: "#666",
+    marginTop: 8,
+    textAlign: "center",
+  },
+  permissionTitle: {
     fontSize: 24,
-    marginBottom: 10,
-  },
-  mockCameraSubtext: {
-    fontSize: 16,
-    textAlign: 'center',
-    color: '#666',
+    fontWeight: "bold",
+    color: "#333",
+    textAlign: "center",
+    marginBottom: 16,
   },
   permissionText: {
     fontSize: 16,
-    textAlign: 'center',
-    marginBottom: 20,
-    color: '#333',
+    color: "#666",
+    textAlign: "center",
+    marginBottom: 32,
+    lineHeight: 24,
   },
-  loadingText: {
+  requestButton: {
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  requestButtonText: {
+    color: "#fff",
     fontSize: 16,
-    color: '#666',
+    fontWeight: "600",
+  },
+  backButton: {
+    backgroundColor: "#f3f4f6",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  backButtonText: {
+    color: "#374151",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  camera: {
+    flex: 1,
+  },
+  webVideo: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover' as any,
+  },
+  webcamPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000',
   },
   errorText: {
+    color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#ff0000',
-    textAlign: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   errorSubtext: {
+    color: '#ccc',
     fontSize: 14,
-    color: '#666',
     textAlign: 'center',
   },
-  buttonContainer: {
+  webControlsBar: {
     position: 'absolute',
-    bottom: 50,
-    width: '100%',
-    alignItems: 'center',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
   },
-  captureButton: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: 'white',
-    borderWidth: 5,
-    borderColor: 'gray',
+  controlButton: {
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
   },
-  captureButtonRecording: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: 'red',
-    borderWidth: 5,
-    borderColor: 'white',
+  controlText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
   },
-  mobileOverlay: {
-    position: 'absolute',
-    top: 50,
-    right: 20,
-    flexDirection: 'column',
-    gap: 15,
-  },
-  mobileControlButton: {
+  photoButton: {
+    backgroundColor: "rgba(255, 255, 255, 0.9)",
     width: 60,
     height: 60,
     borderRadius: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: "center",
+    alignItems: "center",
   },
-  photoButton: {
-    backgroundColor: 'rgba(0, 123, 255, 0.8)',
+  recordButton: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "rgba(255, 255, 255, 0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 4,
+    borderColor: "#fff",
   },
-  videoButton: {
-    backgroundColor: 'rgba(255, 59, 48, 0.8)',
+  recordButtonActive: {
+    backgroundColor: "rgba(220, 38, 38, 0.9)",
   },
-  stopButton: {
-    backgroundColor: 'rgba(255, 0, 0, 0.9)',
+  recordButtonInner: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#dc2626",
   },
-  mobileButtonText: {
-    fontSize: 24,
+  recordButtonInnerActive: {
+    borderRadius: 4,
+    backgroundColor: "#fff",
+  },
+  placeholder: {
+    width: 60,
+    height: 60,
   },
   recordingIndicator: {
-    position: 'absolute',
-    top: 50,
+    position: "absolute",
+    top: 80,
     left: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 0, 0, 0.8)',
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(220, 38, 38, 0.9)",
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 15,
+    borderRadius: 16,
   },
   recordingDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: 'white',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#fff",
     marginRight: 8,
   },
   recordingText: {
-    color: 'white',
-    fontWeight: 'bold',
+    color: "#fff",
     fontSize: 14,
+    fontWeight: "600",
   },
-  retryButton: {
-    backgroundColor: 'rgba(0, 123, 255, 0.8)',
-    padding: 15,
-    borderRadius: 5,
+  recordingLabel: {
+    position: "absolute",
+    bottom: -30,
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "600",
+    textAlign: "center",
   },
-  retryButtonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: 'white',
+  cameraOverlay: {
+    flex: 1,
+    justifyContent: "space-between",
   },
-  recordingButton: {
-    backgroundColor: 'rgba(255, 0, 0, 0.8)',
+  topControls: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingTop: 20,
   },
-  captureButtonText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: 'white',
+  bottomControls: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 40,
+    paddingBottom: 40,
   },
-  videoButtonText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  button: {
-    backgroundColor: '#007AFF',
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 16,
-  },
-  retryButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-});
-
-export default CameraScreen; 
+}); 

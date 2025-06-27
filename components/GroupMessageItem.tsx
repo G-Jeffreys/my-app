@@ -7,6 +7,7 @@ import { useReceiptTracking } from "../hooks/useReceiptTracking";
 import { Message, FirestoreTimestamp } from "../models/firestore/message";
 import { User } from "../models/firestore/user";
 import PlatformVideo from "./PlatformVideo";
+import SummaryLine from "./SummaryLine";
 
 interface GroupMessageItemProps {
   message: Message;
@@ -128,6 +129,7 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
               {message.mediaURL ? `📎 ${message.text}` : message.text}
             </Text>
           )}
+          {/* No AI summary for sender - they know what they sent */}
           <Text style={styles.timestamp}>
             {formatTimestamp(message.sentAt)}
           </Text>
@@ -202,6 +204,11 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
           </>
         ) : (
           <>
+            {/* Phase 2: Show AI-generated summary for recipients before they open the message */}
+            <SummaryLine 
+              messageId={message.id}
+              style={styles.summaryLine}
+            />
             <View style={styles.placeholder}>
               <Text style={styles.placeholderText}>
                 {message.mediaType === 'text' ? 
@@ -336,6 +343,9 @@ const styles = StyleSheet.create({
     color: '#999',
     textAlign: 'right',
     marginTop: 4,
+  },
+  summaryLine: {
+    marginVertical: 6,
   },
 });
 

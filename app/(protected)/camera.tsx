@@ -3,7 +3,7 @@ import {
   useCameraPermissions,
   useMicrophonePermissions,
 } from "expo-camera";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
   ActivityIndicator,
@@ -19,6 +19,7 @@ import Header from '../../components/Header';
 
 export default function CameraScreen() {
   const router = useRouter();
+  const { conversationId } = useLocalSearchParams<{ conversationId?: string }>();
   const [facing, setFacing] = useState<"front" | "back">("back");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTimeLeft, setRecordingTimeLeft] = useState(10);
@@ -31,13 +32,14 @@ export default function CameraScreen() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
-  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [microphonePermission, requestMicrophonePermission] = useMicrophonePermissions();
 
   console.log('[CameraScreen] Component rendered');
   console.log('[CameraScreen] Platform:', Platform.OS);
+  console.log('[CameraScreen] ConversationId:', conversationId);
 
   // Web permission handling
   const checkWebPermissions = async () => {
@@ -256,7 +258,11 @@ export default function CameraScreen() {
         // Navigate to preview with the blob URL
         router.push({
           pathname: "/(protected)/preview",
-          params: { uri: url, type: "video" },
+          params: { 
+            uri: url, 
+            type: "video",
+            ...(conversationId && { conversationId })
+          },
         });
       };
 
@@ -331,7 +337,11 @@ export default function CameraScreen() {
         if (video) {
           router.push({
             pathname: "/(protected)/preview",
-            params: { uri: video.uri, type: "video" },
+            params: { 
+              uri: video.uri, 
+              type: "video",
+              ...(conversationId && { conversationId })
+            },
           });
         }
       }
@@ -387,7 +397,11 @@ export default function CameraScreen() {
         console.log('[CameraScreen] Web photo taken, data URL length:', imageSrc.length);
         router.push({
           pathname: "/(protected)/preview",
-          params: { uri: imageSrc, type: "image" },
+          params: { 
+            uri: imageSrc, 
+            type: "image",
+            ...(conversationId && { conversationId })
+          },
         });
       } else {
         console.error('[CameraScreen] Failed to capture screenshot');
@@ -408,7 +422,11 @@ export default function CameraScreen() {
       if (photo) {
         router.push({
           pathname: "/(protected)/preview",
-          params: { uri: photo.uri, type: "image" },
+          params: { 
+            uri: photo.uri, 
+            type: "image",
+            ...(conversationId && { conversationId })
+          },
         });
       }
     } catch (e) {

@@ -6,6 +6,7 @@ import { useCountdown } from "../hooks/useCountdown";
 import { useReceiptTracking } from "../hooks/useReceiptTracking";
 import { Message, FirestoreTimestamp } from "../models/firestore/message";
 import PlatformVideo from "./PlatformVideo";
+import SummaryLine from "./SummaryLine";
 
 interface MessageItemProps {
   message: Message;
@@ -105,6 +106,7 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
             {message.mediaURL ? `📎 ${message.text}` : message.text}
           </Text>
         )}
+        {/* No AI summary for sender - they know what they sent */}
       </View>
     );
   }
@@ -155,17 +157,24 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
           </View>
         </>
       ) : (
-        <View style={styles.placeholder}>
-          <Text style={styles.placeholderText}>
-            {message.mediaType === 'text' ? 
-              '💬 Tap to view message' : 
-              '📸 Tap to view snap'
-            }
-          </Text>
-          {message.text && message.mediaURL && (
-            <Text style={styles.placeholderSubtext}>Contains media + text</Text>
-          )}
-        </View>
+        <>
+          {/* Phase 2: Show AI-generated summary for recipients before they open the message */}
+          <SummaryLine 
+            messageId={message.id}
+            style={styles.summaryLine}
+          />
+          <View style={styles.placeholder}>
+            <Text style={styles.placeholderText}>
+              {message.mediaType === 'text' ? 
+                '💬 Tap to view message' : 
+                '📸 Tap to view snap'
+              }
+            </Text>
+            {message.text && message.mediaURL && (
+              <Text style={styles.placeholderSubtext}>Contains media + text</Text>
+            )}
+          </View>
+        </>
       )}
     </TouchableOpacity>
   );
@@ -250,6 +259,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 22,
     color: "#333",
+  },
+  summaryLine: {
+    marginTop: 8,
   }
 });
 

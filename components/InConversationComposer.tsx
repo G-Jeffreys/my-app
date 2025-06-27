@@ -20,7 +20,7 @@ import {
 import { firestore } from '../lib/firebase';
 import { useAuth } from '../store/useAuth';
 import { Message } from '../models/firestore/message';
-import { TtlPreset, DEFAULT_TTL_PRESET, MESSAGE_LIMITS } from '../config/messaging';
+import { TtlPreset, DEFAULT_TTL_PRESET, MESSAGE_LIMITS, TTL_PRESET_DISPLAY } from '../config/messaging';
 import TtlSelector from './TtlSelector';
 
 interface InConversationComposerProps {
@@ -69,10 +69,12 @@ const InConversationComposer: React.FC<InConversationComposerProps> = ({
         conversationId, // Group conversation ID
         sentAt: serverTimestamp(),
         
-        // Future-proofing flags
+        // Phase 2 default lifecycle & LLM flags
         hasSummary: false,
         summaryGenerated: false,
         ephemeralOnly: false,
+        delivered: true, // Default to delivered, AI pipeline may change this if content is blocked
+        blocked: false,
       };
 
       const messageRef = await addDoc(collection(firestore, 'messages'), messageData);
@@ -212,7 +214,7 @@ const InConversationComposer: React.FC<InConversationComposerProps> = ({
       <View style={styles.footer}>
         <Text style={styles.characterCount}>{text.length}/500</Text>
         <Text style={styles.hint}>
-          Messages will expire after {ttl}s for all group members
+          Messages will expire after {TTL_PRESET_DISPLAY[ttl]} for all group members
         </Text>
       </View>
     </View>

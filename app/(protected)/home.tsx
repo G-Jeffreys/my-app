@@ -100,9 +100,7 @@ export default function HomeScreen() {
         );
         unsubscribes.push(conversationsUnsubscribe);
 
-        // 2. Listen to individual messages (non-group messages)
-        // Note: Individual messages don't have a conversationId field, so we can't filter by it
-        // We'll get all messages for this user and filter out group messages in the listener
+        // 2. Listen to individual messages where user is recipient
         const individualMessagesQuery = query(
           collection(firestore, "messages"),
           where("recipientId", "==", user.uid),
@@ -121,12 +119,24 @@ export default function HomeScreen() {
               }
             });
 
-            // Add/update individual messages (filter out group messages)
+            // Add/update individual messages (filter out group messages and blocked content)
             snapshot.forEach((doc) => {
               const messageData = { id: doc.id, ...doc.data() } as Message;
               
               // Skip messages that have a conversationId (these are group messages)
               if (messageData.conversationId) {
+                return;
+              }
+              
+              // Only show messages where user is sender or recipient
+              if (messageData.senderId !== user.uid && messageData.recipientId !== user.uid) {
+                return;
+              }
+              
+              // Phase 2: Skip blocked messages or messages that haven't been delivered yet
+              // For backward compatibility, treat messages without these flags as delivered
+              if (messageData.blocked === true || messageData.delivered === false) {
+                console.log('[HomeScreen] Filtering out blocked/undelivered message:', doc.id);
                 return;
               }
               
@@ -150,6 +160,62 @@ export default function HomeScreen() {
           }
         );
         unsubscribes.push(individualMessagesUnsubscribe);
+
+        // 3. Listen to individual messages where user is sender (to show sent messages)
+        const sentMessagesQuery = query(
+          collection(firestore, "messages"),
+          where("senderId", "==", user.uid),
+          orderBy("sentAt", "desc")
+        );
+
+        const sentMessagesUnsubscribe = onSnapshot(
+          sentMessagesQuery,
+          (snapshot) => {
+            console.log('[HomeScreen] Sent messages updated:', snapshot.size);
+            
+            // Remove old sent messages
+            snapshot.docChanges().forEach((change) => {
+              if (change.type === 'removed') {
+                allFeedItems.delete(`message-${change.doc.id}`);
+              }
+            });
+
+            // Add/update sent messages (filter out group messages and blocked content)
+            snapshot.forEach((doc) => {
+              const messageData = { id: doc.id, ...doc.data() } as Message;
+              
+              // Skip messages that have a conversationId (these are group messages)
+              if (messageData.conversationId) {
+                return;
+              }
+              
+              // Phase 2: Skip blocked messages or messages that haven't been delivered yet
+              // For backward compatibility, treat messages without these flags as delivered
+              if (messageData.blocked === true || messageData.delivered === false) {
+                console.log('[HomeScreen] Filtering out blocked/undelivered sent message:', doc.id);
+                return;
+              }
+              
+              const timestamp = messageData.sentAt instanceof Date 
+                ? messageData.sentAt 
+                : new Date((messageData.sentAt as any)?.seconds * 1000);
+
+              allFeedItems.set(`message-${doc.id}`, {
+                id: `message-${doc.id}`,
+                type: 'message',
+                data: messageData,
+                timestamp,
+              });
+            });
+
+            updateFeed();
+          },
+          (error) => {
+            console.error('[HomeScreen] Error in sent messages query:', error);
+            setLoading(false);
+          }
+        );
+        unsubscribes.push(sentMessagesUnsubscribe);
 
         // Initial update to show loading state is complete
         updateFeed();

@@ -55,4 +55,31 @@ export const LLM_CONFIG = {
   MAX_SUMMARY_TOKENS: 30, // As per PRD FR-5
   BATCH_SIZE_FOR_RAG: 20, // Chunk every ~20 messages for RAG
   SUMMARY_GENERATION_TIMEOUT_MS: 5000, // 5s as per PRD
+} as const;
+
+// ---------------------------
+// 🔗 External Service Configs
+// ---------------------------
+// NOTE: All secrets are injected via environment variables so that
+// the same client bundle can run on Expo Web & Expo Go; only the
+// server-side Cloud Functions / Cloud Run worker will read the values.
+
+export const PINECONE_CONFIG = {
+  API_KEY: process.env.PINECONE_API_KEY ?? '',
+  ENVIRONMENT: process.env.PINECONE_ENV ?? 'us-central1',
+  // Namespace will be the conversationId at runtime
+} as const;
+
+export const OPENAI_CONFIG = {
+  API_KEY: process.env.OPENAI_API_KEY ?? '',
+  MODEL: 'gpt-4o-mini',
+  MODERATION_MODEL: 'text-moderation-latest',
+} as const;
+
+// Cloud Tasks configuration for moderation/summarisation pipeline
+export const TASK_QUEUE_CONFIG = {
+  LOCATION: process.env.TASK_QUEUE_LOCATION ?? 'us-central1',
+  QUEUE_NAME: process.env.MODERATION_TASK_QUEUE_NAME ?? 'moderate-summary-queue',
+  // The URL of the Cloud Run worker; only used by the enqueue function
+  WORKER_ENDPOINT: process.env.MODERATION_WORKER_URL ?? 'https://moderation-worker-435345795137.us-central1.run.app/moderate-summary-job',
 } as const; 

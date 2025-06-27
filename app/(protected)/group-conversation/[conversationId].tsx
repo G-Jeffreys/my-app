@@ -79,10 +79,17 @@ export default function GroupConversationScreen() {
         const messagesUnsubscribe = onSnapshot(
           messagesQuery, 
           (snapshot) => {
-            const messagesList = snapshot.docs.map(doc => ({
-              id: doc.id,
-              ...doc.data()
-            })) as Message[];
+            // Phase 2: Filter out blocked or undelivered messages
+            const messagesList = snapshot.docs
+              .map(doc => ({ id: doc.id, ...doc.data() }) as Message)
+              .filter(message => {
+                // For backward compatibility, treat messages without these flags as delivered
+                if (message.blocked === true || message.delivered === false) {
+                  console.log('[GroupConversation] Filtering out blocked/undelivered message:', message.id);
+                  return false;
+                }
+                return true;
+              });
             
             console.log('[GroupConversation] Messages updated:', messagesList.length);
             setMessages(messagesList);

@@ -12,10 +12,10 @@ import { User } from "../models/firestore/user";
 import { DEFAULT_TTL_PRESET } from "../config/messaging";
 
 interface AuthState {
-  user: (User & { uid: string }) | null; // Keep uid for backward compatibility
+  user: (User & { uid: string }) | null;
   loading: boolean;
   error: string | null;
-  initialize: () => () => void; // Returns the unsubscribe function
+  initialize: () => () => void;
   handleGoogleSignIn: (id_token: string | undefined) => Promise<void>;
   signOut: () => Promise<void>;
   setUser: (user: (User & { uid: string }) | null) => void;
@@ -26,7 +26,8 @@ export const useAuth = create<AuthState>((set) => ({
   loading: true,
   error: null,
   initialize: () => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    console.log('[Auth] Initializing web Firebase auth state listener');
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
       console.log(
         "[Auth] Auth state changed:",
         firebaseUser ? firebaseUser.email : "signed out"
@@ -42,13 +43,13 @@ export const useAuth = create<AuthState>((set) => ({
             set({
               user: {
                 id: firebaseUser.uid,
-                uid: firebaseUser.uid, // Keep for backward compatibility
+                uid: firebaseUser.uid,
                 email: firebaseUser.email,
-                displayName: userData.displayName || firebaseUser.displayName || "",
-                photoURL: userData.photoURL || firebaseUser.photoURL,
-                createdAt: userData.createdAt,
-                defaultTtl: userData.defaultTtl || DEFAULT_TTL_PRESET,
-              } as User & { uid: string }, // Add uid for compatibility
+                displayName: userData?.displayName || firebaseUser.displayName || "",
+                photoURL: userData?.photoURL || firebaseUser.photoURL,
+                createdAt: userData?.createdAt,
+                defaultTtl: userData?.defaultTtl || DEFAULT_TTL_PRESET,
+              } as User & { uid: string },
               loading: false,
             });
           } else {
@@ -95,8 +96,8 @@ export const useAuth = create<AuthState>((set) => ({
         const credential = GoogleAuthProvider.credential(id_token);
         await signInWithCredential(auth, credential);
         set({ loading: false });
-      } catch (e: any) {
-        console.error("Firebase sign in error", e);
+      } catch (error: any) {
+        console.error("Firebase sign in error", error);
         set({ loading: false, error: "Failed to sign in with Google." });
       }
     } else {
@@ -116,11 +117,10 @@ export const useAuth = create<AuthState>((set) => ({
         loading: false, 
         error: 'Failed to sign out. Please try again.' 
       });
-      throw error; // Re-throw so calling component can handle
+      throw error;
     }
   },
   setUser: (user) => set({ user }),
 }));
 
-// Initialize auth listener on app load
-useAuth.getState().initialize();
+// Note: Initialize auth listener manually in App.tsx after Firebase is ready

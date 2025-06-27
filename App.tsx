@@ -1,5 +1,5 @@
 import 'react-native-gesture-handler';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Platform, View, Text } from 'react-native';
 import { Slot } from 'expo-router';
@@ -7,10 +7,12 @@ import '../global.css';
 
 // Initialize Firebase on app startup
 import { firebaseApp } from './lib/firebase';
+import { useAuth } from './store/useAuth';
 
 export default function App() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
+  const authUnsubscribeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     console.log('[App] Starting app initialization...');
@@ -23,6 +25,12 @@ export default function App() {
         
         if (firebaseApp) {
           console.log('[App] Firebase initialized successfully');
+          
+          // Initialize auth listener now that Firebase is ready
+          console.log('[App] Initializing auth listener...');
+          const unsubscribe = useAuth.getState().initialize();
+          authUnsubscribeRef.current = unsubscribe;
+          
           setIsInitialized(true);
         } else {
           console.log('[App] Firebase app instance not found, but continuing...');
@@ -36,7 +44,15 @@ export default function App() {
       }
     }, 1000);
 
-    return () => clearTimeout(initTimer);
+    // Cleanup function
+    return () => {
+      clearTimeout(initTimer);
+      if (authUnsubscribeRef.current) {
+        console.log('[App] Cleaning up auth listener');
+        authUnsubscribeRef.current();
+        authUnsubscribeRef.current = null;
+      }
+    };
   }, []);
 
   // Show loading screen while initializing

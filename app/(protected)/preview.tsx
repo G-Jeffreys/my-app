@@ -161,8 +161,8 @@ export default function PreviewScreen() {
       const messageRef = await addDoc(collection(firestore, 'messages'), messageData);
       console.log('[PreviewScreen] Group message created successfully:', messageRef.id);
 
-      // 3. Create receipts for all group participants
-      await createGroupReceipts(messageRef.id, conversationId, auth.currentUser.uid);
+      // Note: Receipts are now created automatically by recipients when they load the message
+      // This is handled by the useReceiptTracking hook to comply with new security rules
 
       console.log('[PreviewScreen] Group message sent successfully with TTL:', selectedTtl);
       setIsUploading(false);
@@ -174,48 +174,8 @@ export default function PreviewScreen() {
     }
   };
 
-  // Helper function to create receipts for group messages
-  const createGroupReceipts = async (messageId: string, conversationId: string, senderId: string) => {
-    try {
-      console.log('[PreviewScreen] Creating group receipts for:', { messageId, conversationId });
-      
-      // Get conversation participants
-      const conversationRef = doc(firestore, 'conversations', conversationId);
-      const conversationSnap = await getDoc(conversationRef);
-      
-      if (!conversationSnap.exists()) {
-        throw new Error('Conversation not found');
-      }
-      
-      const conversationData = conversationSnap.data();
-      const participantIds = conversationData.participantIds || [];
-      
-      console.log('[PreviewScreen] Found participants:', { count: participantIds.length });
-      
-      // Create receipts for all participants except sender
-      const receiptPromises = participantIds
-        .filter((participantId: string) => participantId !== senderId)
-        .map(async (participantId: string) => {
-          const receiptId = `${messageId}_${participantId}`;
-          const receiptData = {
-            messageId,
-            userId: participantId,
-            conversationId,
-            receivedAt: serverTimestamp(),
-            viewedAt: null,
-          };
-          
-          return setDoc(doc(firestore, 'receipts', receiptId), receiptData);
-        });
-      
-      await Promise.all(receiptPromises);
-      console.log('[PreviewScreen] Group receipts created:', { count: receiptPromises.length });
-      
-    } catch (error) {
-      console.error('[PreviewScreen] Error creating group receipts:', error);
-      // Don't throw - message was sent successfully, receipt creation is secondary
-    }
-  };
+  // Note: Group receipts are now created automatically by recipients when they load messages
+  // This is handled by the useReceiptTracking hook to comply with new security rules
 
   const handleTtlChange = (newTtl: TtlPreset) => {
     console.log('[PreviewScreen] TTL changed', { from: selectedTtl, to: newTtl });

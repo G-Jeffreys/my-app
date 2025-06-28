@@ -81,8 +81,8 @@ const InConversationComposer: React.FC<InConversationComposerProps> = ({
       
       console.log('[InConversationComposer] Text message sent successfully:', messageRef.id);
 
-      // Create receipts for all group participants
-      await createGroupReceipts(messageRef.id, conversationId, user.uid);
+      // Note: Receipts are now created automatically by recipients when they load the message
+      // This is handled by the useReceiptTracking hook to comply with new security rules
       
       const newMessage = { 
         id: messageRef.id, 
@@ -106,48 +106,8 @@ const InConversationComposer: React.FC<InConversationComposerProps> = ({
     }
   };
 
-  // Helper function to create receipts for group messages
-  const createGroupReceipts = async (messageId: string, conversationId: string, senderId: string) => {
-    try {
-      console.log('[InConversationComposer] Creating group receipts for:', { messageId, conversationId });
-      
-      // Get conversation participants
-      const conversationRef = doc(firestore, 'conversations', conversationId);
-      const conversationSnap = await getDoc(conversationRef);
-      
-      if (!conversationSnap.exists()) {
-        throw new Error('Conversation not found');
-      }
-      
-      const conversationData = conversationSnap.data();
-      const participantIds = conversationData.participantIds || [];
-      
-      console.log('[InConversationComposer] Found participants:', { count: participantIds.length });
-      
-      // Create receipts for all participants except sender
-      const receiptPromises = participantIds
-        .filter((participantId: string) => participantId !== senderId)
-        .map(async (participantId: string) => {
-          const receiptId = `${messageId}_${participantId}`;
-          const receiptData = {
-            messageId,
-            userId: participantId,
-            conversationId,
-            receivedAt: serverTimestamp(),
-            viewedAt: null,
-          };
-          
-          return setDoc(doc(firestore, 'receipts', receiptId), receiptData);
-        });
-      
-      await Promise.all(receiptPromises);
-      console.log('[InConversationComposer] Group receipts created:', { count: receiptPromises.length });
-      
-    } catch (error) {
-      console.error('[InConversationComposer] Error creating group receipts:', error);
-      // Don't throw - message was sent successfully, receipt creation is secondary
-    }
-  };
+  // Note: Group receipts are now created automatically by recipients when they load messages
+  // This is handled by the useReceiptTracking hook to comply with new security rules
 
   const handleSendPhoto = () => {
     console.log('[InConversationComposer] Opening camera for group message');

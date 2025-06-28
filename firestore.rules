@@ -57,23 +57,21 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Receipts for tracking receivedAt timestamps
+    // Receipts for tracking receivedAt timestamps  
     match /receipts/{receiptId} {
-      // Create: both sender and recipient can create receipts 
-      // This allows senders to create receipts for recipients during message sending
-      allow create: if request.auth.uid != null &&
-        (
-          // Individual message: sender or recipient can create receipt
-          (exists(request.resource.data.messageId) &&
-           (request.auth.uid == get(/databases/$(database)/documents/messages/$(request.resource.data.messageId)).data.senderId ||
-            request.auth.uid == get(/databases/$(database)/documents/messages/$(request.resource.data.messageId)).data.recipientId)) ||
-          // Group message: participant in conversation can create receipt
-          (exists(request.resource.data.conversationId) &&
-           isParticipantInConversation(request.auth.uid, request.resource.data.conversationId))
-        );
+      // Create: authenticated users can create receipts
+      // Receipt ID format: {messageId}_{userId} ensures ownership
+      allow create: if request.auth.uid != null && 
+        request.resource.data.userId == request.auth.uid;
       
-      // Read/Update: only the user who owns the receipt
-      allow read, update: if request.auth.uid == resource.data.userId;
+      // Read: allow if the receipt belongs to the current user OR doesn't exist yet
+      // This fixes the permission error when listening for non-existent receipts
+      allow read: if request.auth.uid != null && 
+        (resource == null || request.auth.uid == resource.data.userId);
+      
+      // Update: only the user who owns the receipt
+      allow update: if request.auth.uid != null && 
+        request.auth.uid == resource.data.userId;
       
       // Delete: only system functions can delete
       allow delete: if false;

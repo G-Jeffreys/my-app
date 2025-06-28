@@ -25,65 +25,149 @@ const toDate = (timestamp: FirestoreTimestamp): Date => {
   return new Date(timestamp.seconds * 1000 + timestamp.nanoseconds / 1000000);
 };
 
+// Helper function to format countdown time
+const formatTime = (seconds: number): string => {
+  if (seconds <= 0) return '0s';
+  
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  } else if (minutes > 0) {
+    return `${minutes}m ${secs}s`;
+  } else {
+    return `${secs}s`;
+  }
+};
+
 const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
   const user = useAuth((state) => state.user);
   const [isOpened, setIsOpened] = useState(false);
   const videoRef = useRef<any>(null);
 
-  // Use receipt tracking for proper receivedAt timestamp
+  // Use receipt tracking for proper receivedAt timestamp (for recipients only)
   const { receipt, isLoading: receiptLoading, markAsViewed, receivedAt } = useReceiptTracking(
     message.id, 
     message.conversationId
   );
 
-  // Use receivedAt for TTL countdown instead of sentAt
-  const { remaining, isExpired } = useCountdown(receivedAt, message.ttlPreset);
-
   const isSender = message.senderId === user?.uid;
+
+  // Determine the start time for TTL countdown
+  const ttlStartTime = isSender ? (
+    // For senders, use sentAt timestamp (they sent the message)
+    message.sentAt instanceof Date ? message.sentAt : 
+    new Date((message.sentAt as any).seconds * 1000)
+  ) : (
+    // For recipients, use receivedAt timestamp (when they received it)
+    receivedAt
+  );
+
+  // Use appropriate timestamp for TTL countdown
+  const { remaining, isExpired } = useCountdown(ttlStartTime, message.ttlPreset);
+  
+  // Check if message is marked as expired in database
+  const isExpiredInDB = message.expired === true;
+  
+  // Message is considered expired if either client-side countdown expired OR database marked it as expired
+  const messageExpired = isExpired || isExpiredInDB;
 
   logMessage('Component rendered', {
     messageId: message.id,
     isSender,
     hasReceiptTracking: !!receipt,
     receivedAt: receivedAt?.toISOString(),
+    sentAt: message.sentAt instanceof Date ? message.sentAt.toISOString() : (message.sentAt as any)?.seconds,
+    ttlStartTime: ttlStartTime?.toISOString(),
     remaining,
     isExpired,
+    isExpiredInDB,
+    messageExpired,
     receiptLoading
   });
 
   // Handle marking message as viewed when opened
   useEffect(() => {
-    if (isOpened && !isSender && receipt && !receipt.viewedAt) {
+    if (isOpened && !isSender && receipt && !receipt.viewedAt && !messageExpired) {
       logMessage('Marking message as viewed', { messageId: message.id });
       markAsViewed();
     }
-  }, [isOpened, isSender, receipt, markAsViewed, message.id]);
+  }, [isOpened, isSender, receipt, markAsViewed, message.id, messageExpired]);
 
   // Hide expired messages immediately for better UX (server cleanup runs hourly)
   useEffect(() => {
-    if (isExpired && !isSender) {
-      logMessage('Message expired - hiding from UI', { 
+    if (messageExpired && !isSender) {
+      logMessage('Message expired - showing summary only', { 
         messageId: message.id, 
         remaining,
         ttl: message.ttlPreset,
-        receivedAt: receivedAt?.toISOString()
+        receivedAt: receivedAt?.toISOString(),
+        isExpiredInDB
       });
     }
-  }, [isExpired, isSender, message.id, remaining, message.ttlPreset, receivedAt]);
+  }, [messageExpired, isSender, message.id, remaining, message.ttlPreset, receivedAt, isExpiredInDB]);
 
   const handlePress = () => {
-    if (!isExpired && !isSender) {
-      logMessage('Opening message', { messageId: message.id, remaining });
+    if (!messageExpired || isSender) {
+      logMessage('Opening message', { messageId: message.id, remaining, messageExpired });
       setIsOpened(true);
     } else {
-      logMessage('Cannot open message', { 
+      logMessage('Cannot open expired message', { 
         messageId: message.id, 
-        isExpired, 
+        messageExpired, 
         isSender, 
         remaining 
       });
+      // Show alert to user that message has expired
+      // Note: Alert would need to be imported if used
+      console.log('⏰ This message has expired and is no longer accessible');
     }
   };
+
+  // For recipients, hide completely if expired and no summary exists
+  if (messageExpired && !isSender && !message.hasSummary) {
+    return null;
+  }
+
+  // Show expired message with summary for recipients
+  if (messageExpired && !isSender && message.hasSummary) {
+    return (
+      <TouchableOpacity
+        style={[
+          styles.messageContainer,
+          styles.expiredMessage,
+          { marginBottom: 10 }
+        ]}
+        disabled={true} // No interaction for expired messages
+      >
+        <View style={styles.messageContent}>
+          {/* Expired message indicator */}
+          <View style={styles.expiredIndicator}>
+            <Text style={styles.expiredText}>🔒 Message Expired</Text>
+            <Text style={styles.expiredSubtext}>
+              Content no longer available
+            </Text>
+          </View>
+          
+          {/* Show AI summary if available */}
+          <SummaryLine messageId={message.id} />
+          
+          {/* Show when it expired */}
+          {message.expiredAt && (
+            <Text style={styles.timestampText}>
+              Expired: {new Date(
+                message.expiredAt instanceof Date 
+                  ? message.expiredAt 
+                  : (message.expiredAt as any).seconds * 1000
+              ).toLocaleString()}
+            </Text>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  }
 
   // Show loading state while receipt is being created/loaded
   if (receiptLoading && !isSender) {
@@ -107,20 +191,6 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
           </Text>
         )}
         {/* No AI summary for sender - they know what they sent */}
-      </View>
-    );
-  }
-
-  // Recipient view - expired message
-  if (isExpired && !isOpened) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.expiredContainer}>
-          <Text style={styles.expiredText}>⏰ Expired</Text>
-          <Text style={styles.expiredSubtext}>
-            {message.mediaType === 'text' ? 'Text message' : 'Media'} expired unopened
-          </Text>
-        </View>
       </View>
     );
   }
@@ -150,9 +220,11 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
             </View>
           )}
           
-          {/* TTL countdown timer */}
-          <View style={styles.timer}>
-            <Text style={styles.timerText}>{remaining}s</Text>
+          {/* TTL Countdown */}
+          <View style={styles.countdown}>
+            <Text style={styles.countdownText}>
+              {messageExpired ? 'EXPIRED' : formatTime(remaining)}
+            </Text>
           </View>
         </>
       ) : (
@@ -201,16 +273,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 20,
   },
-  expiredText: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#ff6b6b",
-  },
-  expiredSubtext: {
-    fontSize: 14,
-    color: "#999",
-    marginTop: 4,
-  },
+
   placeholder: {
     height: 120,
     justifyContent: "center",
@@ -261,7 +324,62 @@ const styles = StyleSheet.create({
   },
   summaryLine: {
     marginTop: 8,
-  }
+  },
+  messageContainer: {
+    alignSelf: "flex-end",
+    marginRight: 16,
+    marginVertical: 4,
+    maxWidth: "80%",
+  },
+  messageContent: {
+    padding: 8,
+  },
+  expiredIndicator: {
+    padding: 8,
+    backgroundColor: '#ff6b6b',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  expiredText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  expiredSubtext: {
+    color: 'white',
+    fontSize: 10,
+    textAlign: 'center',
+    opacity: 0.9,
+  },
+  timestampText: {
+    fontSize: 10,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  expiredMessage: {
+    backgroundColor: '#f0f0f0',
+    borderWidth: 1,
+    borderColor: '#d0d0d0',
+    borderStyle: 'dashed',
+    opacity: 0.8,
+  },
+  countdown: {
+    position: "absolute",
+    top: 15,
+    right: 15,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  countdownText: {
+    color: "white",
+    fontWeight: "bold",
+    fontSize: 14,
+  },
 });
 
 export default MessageItem;

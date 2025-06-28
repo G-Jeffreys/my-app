@@ -14,6 +14,12 @@ export const useReceiptTracking = (messageId: string, conversationId?: string) =
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  logReceipt('🔄 useReceiptTracking called', { 
+    messageId, 
+    conversationId, 
+    userId: user?.uid 
+  });
+
   // Create a receipt when a message is first loaded/received
   const createReceipt = async () => {
     if (!user || !messageId) {
@@ -27,10 +33,10 @@ export const useReceiptTracking = (messageId: string, conversationId?: string) =
       
       // Check if receipt already exists
       const existingReceipt = await getDoc(receiptRef);
-             if (existingReceipt.exists()) {
-         logReceipt('📧 Receipt already exists, using existing', { receiptId });
-         const data = existingReceipt.data() as Omit<Receipt, 'id'>;
-         return { ...data, id: existingReceipt.id };
+      if (existingReceipt.exists()) {
+        logReceipt('📧 Receipt already exists, using existing', { receiptId });
+        const data = existingReceipt.data() as Omit<Receipt, 'id'>;
+        return { ...data, id: existingReceipt.id };
       }
 
       // Create new receipt with receivedAt timestamp
@@ -132,8 +138,35 @@ export const useReceiptTracking = (messageId: string, conversationId?: string) =
     markAsViewed,
     // Helper to get receivedAt as Date for countdown
     receivedAt: receipt?.receivedAt ? (
-      receipt.receivedAt instanceof Date ? receipt.receivedAt : 
-      new Date((receipt.receivedAt as any).seconds * 1000)
-    ) : null
+      (() => {
+        logReceipt('🕐 Converting receivedAt timestamp', { 
+          receiptId: receipt.id,
+          receivedAtType: typeof receipt.receivedAt,
+          receivedAtValue: receipt.receivedAt,
+          isDate: receipt.receivedAt instanceof Date
+        });
+        
+        if (receipt.receivedAt instanceof Date) {
+          return receipt.receivedAt;
+        } else if (receipt.receivedAt && typeof receipt.receivedAt === 'object' && 'seconds' in receipt.receivedAt) {
+          // Firestore timestamp object
+          const convertedDate = new Date((receipt.receivedAt as any).seconds * 1000);
+          logReceipt('✅ Converted Firestore timestamp to Date', { 
+            original: receipt.receivedAt,
+            converted: convertedDate.toISOString()
+          });
+          return convertedDate;
+        } else {
+          logReceipt('⚠️ Unknown receivedAt format, using current time', { receivedAt: receipt.receivedAt });
+          return new Date(); // Fallback to current time
+        }
+      })()
+    ) : (() => {
+      logReceipt('❌ No receivedAt timestamp available', { 
+        hasReceipt: !!receipt,
+        receiptId: receipt?.id 
+      });
+      return null;
+    })()
   };
 }; 

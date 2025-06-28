@@ -164,29 +164,40 @@ const performCleanup = async () => {
             if (receivedAt && receivedAt.toMillis() + ttlMillis < now.toMillis()) {
               logger.info(`⏰ Message ${messageId} expired for recipient ${message.recipientId}`);
 
-              // Delete media file if exists
-              if (message.mediaURL) {
-                try {
-                  const fileUrl = new URL(message.mediaURL);
-                  const filePath = decodeURIComponent(
-                    fileUrl.pathname.split("/").slice(3).join("/")
-                  );
-                  await storage.bucket().file(filePath).delete();
-                  mediaFilesDeleted++;
-                  logger.info(`🗑️ Deleted media file: ${filePath}`);
-                } catch (mediaError) {
-                  logger.error(`❌ Failed to delete media for ${messageId}`, mediaError);
-                  errors++;
+              // Check if message is already marked as expired to avoid duplicate work
+              if (!message.expired) {
+                // Delete media file if exists (free up storage)
+                if (message.mediaURL) {
+                  try {
+                    const fileUrl = new URL(message.mediaURL);
+                    const filePath = decodeURIComponent(
+                      fileUrl.pathname.split("/").slice(3).join("/")
+                    );
+                    await storage.bucket().file(filePath).delete();
+                    mediaFilesDeleted++;
+                    logger.info(`🗑️ Deleted media file: ${filePath}`);
+                  } catch (mediaError) {
+                    logger.error(`❌ Failed to delete media for ${messageId}`, mediaError);
+                    errors++;
+                  }
                 }
+
+                // Mark message as expired but keep document for AI summary access
+                batch.update(messageDoc.ref, {
+                  expired: true,
+                  expiredAt: now,
+                  // Remove the mediaURL since we deleted the file
+                  mediaURL: null,
+                });
+
+                // Delete receipt (no longer needed for expired messages)
+                batch.delete(receiptDoc.ref);
+
+                messagesDeleted++;
+                logger.info(`📝 Message ${messageId} marked as expired, AI summary preserved`);
+              } else {
+                logger.info(`⏭️ Message ${messageId} already marked as expired, skipping`);
               }
-
-              // Delete message document
-              batch.delete(messageDoc.ref);
-
-              // Delete receipt
-              batch.delete(receiptDoc.ref);
-
-              messagesDeleted++;
             } else {
               logger.info(`⏳ Message ${messageId} not yet expired (received: ${receivedAt?.toDate()?.toISOString()})`);
             }
@@ -199,22 +210,34 @@ const performCleanup = async () => {
             if (sentAt.toMillis() + ttlMillis < now.toMillis()) {
               logger.info(`⏰ Message ${messageId} expired (using sentAt fallback)`);
 
-              if (message.mediaURL) {
-                try {
-                  const fileUrl = new URL(message.mediaURL);
-                  const filePath = decodeURIComponent(
-                    fileUrl.pathname.split("/").slice(3).join("/")
-                  );
-                  await storage.bucket().file(filePath).delete();
-                  mediaFilesDeleted++;
-                } catch (mediaError) {
-                  logger.error(`❌ Failed to delete media for ${messageId}`, mediaError);
-                  errors++;
+              // Check if message is already marked as expired
+              if (!message.expired) {
+                if (message.mediaURL) {
+                  try {
+                    const fileUrl = new URL(message.mediaURL);
+                    const filePath = decodeURIComponent(
+                      fileUrl.pathname.split("/").slice(3).join("/")
+                    );
+                    await storage.bucket().file(filePath).delete();
+                    mediaFilesDeleted++;
+                  } catch (mediaError) {
+                    logger.error(`❌ Failed to delete media for ${messageId}`, mediaError);
+                    errors++;
+                  }
                 }
-              }
 
-              batch.delete(messageDoc.ref);
-              messagesDeleted++;
+                // Mark message as expired but preserve for AI summary
+                batch.update(messageDoc.ref, {
+                  expired: true,
+                  expiredAt: now,
+                  mediaURL: null,
+                });
+
+                messagesDeleted++;
+                logger.info(`📝 Message ${messageId} marked as expired (fallback), AI summary preserved`);
+              } else {
+                logger.info(`⏭️ Message ${messageId} already marked as expired, skipping`);
+              }
             }
           }
         }
@@ -243,28 +266,40 @@ const performCleanup = async () => {
             if (allExpired) {
               logger.info(`⏰ Group message ${messageId} expired for all recipients`);
 
-              // Delete media file
-              if (message.mediaURL) {
-                try {
-                  const fileUrl = new URL(message.mediaURL);
-                  const filePath = decodeURIComponent(
-                    fileUrl.pathname.split("/").slice(3).join("/")
-                  );
-                  await storage.bucket().file(filePath).delete();
-                  mediaFilesDeleted++;
-                } catch (mediaError) {
-                  logger.error(`❌ Failed to delete media for ${messageId}`, mediaError);
-                  errors++;
+              // Check if message is already marked as expired
+              if (!message.expired) {
+                // Delete media file
+                if (message.mediaURL) {
+                  try {
+                    const fileUrl = new URL(message.mediaURL);
+                    const filePath = decodeURIComponent(
+                      fileUrl.pathname.split("/").slice(3).join("/")
+                    );
+                    await storage.bucket().file(filePath).delete();
+                    mediaFilesDeleted++;
+                  } catch (mediaError) {
+                    logger.error(`❌ Failed to delete media for ${messageId}`, mediaError);
+                    errors++;
+                  }
                 }
+
+                // Mark message as expired but preserve for AI summary
+                batch.update(messageDoc.ref, {
+                  expired: true,
+                  expiredAt: now,
+                  mediaURL: null,
+                });
+
+                // Delete all receipts (no longer needed for expired messages)
+                receiptsQuery.docs.forEach((receiptDoc) => {
+                  batch.delete(receiptDoc.ref);
+                });
+
+                messagesDeleted++;
+                logger.info(`📝 Group message ${messageId} marked as expired, AI summary preserved`);
+              } else {
+                logger.info(`⏭️ Group message ${messageId} already marked as expired, skipping`);
               }
-
-              // Delete message and all receipts
-              batch.delete(messageDoc.ref);
-              receiptsQuery.docs.forEach((receiptDoc) => {
-                batch.delete(receiptDoc.ref);
-              });
-
-              messagesDeleted++;
             } else {
               logger.info(`⏳ Group message ${messageId} not yet expired for all recipients`);
             }

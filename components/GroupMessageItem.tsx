@@ -38,6 +38,12 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
 
   // Use receivedAt for TTL countdown instead of sentAt
   const { remaining, isExpired } = useCountdown(receivedAt, message.ttlPreset);
+  
+  // Check if message is marked as expired in database
+  const isExpiredInDB = message.expired === true;
+  
+  // Message is considered expired if either client-side countdown expired OR database marked it as expired
+  const messageExpired = isExpired || isExpiredInDB;
 
   logMessage('Rendering group message', {
     messageId: message.id,
@@ -48,40 +54,44 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
     receivedAt: receivedAt?.toISOString(),
     remaining,
     isExpired,
+    isExpiredInDB,
+    messageExpired,
     receiptLoading
   });
 
   // Handle marking message as viewed when opened
   useEffect(() => {
-    if (isOpened && !isOwnMessage && receipt && !receipt.viewedAt) {
+    if (isOpened && !isOwnMessage && receipt && !receipt.viewedAt && !messageExpired) {
       logMessage('Marking group message as viewed', { messageId: message.id });
       markAsViewed();
     }
-  }, [isOpened, isOwnMessage, receipt, markAsViewed, message.id]);
+  }, [isOpened, isOwnMessage, receipt, markAsViewed, message.id, messageExpired]);
 
-  // Hide expired messages immediately for better UX (server cleanup runs hourly)
+  // Show expired messages with summaries for recipients
   useEffect(() => {
-    if (isExpired && !isOwnMessage) {
-      logMessage('Group message expired - hiding from UI', { 
+    if (messageExpired && !isOwnMessage) {
+      logMessage('Group message expired - showing summary only', { 
         messageId: message.id, 
         remaining,
         ttl: message.ttlPreset,
-        receivedAt: receivedAt?.toISOString()
+        receivedAt: receivedAt?.toISOString(),
+        isExpiredInDB
       });
     }
-  }, [isExpired, isOwnMessage, message.id, remaining, message.ttlPreset, receivedAt]);
+  }, [messageExpired, isOwnMessage, message.id, remaining, message.ttlPreset, receivedAt, isExpiredInDB]);
 
   const handlePress = () => {
-    if (!isExpired && !isOwnMessage) {
-      logMessage('Opening group message', { messageId: message.id, remaining });
+    if (!messageExpired || isOwnMessage) {
+      logMessage('Opening group message', { messageId: message.id, remaining, messageExpired });
       setIsOpened(true);
     } else {
-      logMessage('Cannot open group message', { 
+      logMessage('Cannot open expired group message', { 
         messageId: message.id, 
-        isExpired, 
+        messageExpired, 
         isOwnMessage, 
         remaining 
       });
+      console.log('⏰ This message has expired and is no longer accessible');
     }
   };
 
@@ -138,21 +148,46 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
     );
   }
 
-  // Recipient view - expired message
-  if (isExpired && !isOpened) {
+  // For recipients, hide completely if expired and no summary exists
+  if (messageExpired && !isOwnMessage && !message.hasSummary) {
+    return null;
+  }
+
+  // Show expired message with summary for recipients
+  if (messageExpired && !isOwnMessage && message.hasSummary) {
     return (
-      <View style={[styles.container, styles.receivedMessage]}>
-        {showSenderName && (
-          <Text style={styles.senderName}>
-            {sender?.displayName || 'Unknown User'}
-          </Text>
+      <View style={[styles.messageContainer, { alignSelf: isOwnMessage ? 'flex-end' : 'flex-start' }]}>
+        {/* Show sender name for group messages */}
+        {showSenderName && sender && (
+          <Text style={styles.senderName}>{sender.displayName || 'Unknown User'}</Text>
         )}
-        <View style={styles.expiredContainer}>
-          <Text style={styles.expiredText}>⏰ Expired</Text>
-          <Text style={styles.expiredSubtext}>
-            {message.mediaType === 'text' ? 'Text message' : 'Media'} expired unopened
-          </Text>
-        </View>
+        
+        <TouchableOpacity
+          style={[styles.messageContent, styles.expiredMessage]}
+          disabled={true} // No interaction for expired messages
+        >
+          {/* Expired message indicator */}
+          <View style={styles.expiredIndicator}>
+            <Text style={styles.expiredText}>🔒 Message Expired</Text>
+            <Text style={styles.expiredSubtext}>
+              Content no longer available
+            </Text>
+          </View>
+          
+          {/* Show AI summary if available */}
+          <SummaryLine messageId={message.id} />
+          
+          {/* Show when it expired */}
+          {message.expiredAt && (
+            <Text style={styles.timestampText}>
+              Expired: {new Date(
+                message.expiredAt instanceof Date 
+                  ? message.expiredAt 
+                  : (message.expiredAt as any).seconds * 1000
+              ).toLocaleString()}
+            </Text>
+          )}
+        </TouchableOpacity>
       </View>
     );
   }
@@ -344,6 +379,43 @@ const styles = StyleSheet.create({
   },
   summaryLine: {
     marginVertical: 6,
+  },
+  messageContainer: {
+    marginVertical: 4,
+    maxWidth: '80%',
+    paddingHorizontal: 16,
+  },
+  expiredMessage: {
+    backgroundColor: '#f0f0f0',
+    borderWidth: 1,
+    borderColor: '#d0d0d0',
+    borderStyle: 'dashed',
+    opacity: 0.8,
+  },
+  expiredIndicator: {
+    padding: 8,
+    backgroundColor: '#ff6b6b',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  expiredText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  expiredSubtext: {
+    color: 'white',
+    fontSize: 10,
+    textAlign: 'center',
+    opacity: 0.9,
+  },
+  timestampText: {
+    fontSize: 10,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 4,
+    fontStyle: 'italic',
   },
 });
 

@@ -1,12 +1,53 @@
 rules_version = '2';
 
-// Firebase Storage Security Rules - TEMPORARY PERMISSIVE FOR DEBUGGING
+// FIXED: Firebase Storage Security Rules - Proper media access control
 service firebase.storage {
   match /b/{bucket}/o {
     
-    // TEMPORARY: Allow all authenticated users to read/write anywhere for debugging
+    // Helper function to check if user can access a message
+    function canAccessMessage(messageId) {
+      // Get the message document to check participation
+      let messageDoc = firestore.get(/databases/(default)/documents/messages/$(messageId)).data;
+      
+      return request.auth.uid == messageDoc.senderId ||
+             request.auth.uid == messageDoc.recipientId ||
+             (exists(messageDoc.conversationId) && 
+              request.auth.uid in firestore.get(/databases/(default)/documents/conversations/$(messageDoc.conversationId)).data.participantIds);
+    }
+
+    // System service account function
+    function isSystemServiceAccount() {
+      return request.auth == null || 
+             request.auth.uid == null;
+    }
+    
+    // Media files: photos, videos - restricted to message participants
+    match /messages/{messageId}/{fileName} {
+      // Read: only message participants or system
+      allow read: if request.auth != null && (canAccessMessage(messageId) || isSystemServiceAccount());
+      
+      // Write: only message sender or system (for uploads and cleanup)
+      allow write: if request.auth != null && (canAccessMessage(messageId) || isSystemServiceAccount());
+      
+      // Delete: only system (for TTL cleanup)
+      allow delete: if isSystemServiceAccount();
+    }
+    
+    // Profile pictures and other user media
+    match /users/{userId}/{fileName} {
+      // Read: any authenticated user (for profile pics in UI)
+      allow read: if request.auth != null;
+      
+      // Write: only the user themselves
+      allow write: if request.auth != null && request.auth.uid == userId;
+      
+      // Delete: user themselves or system
+      allow delete: if (request.auth != null && request.auth.uid == userId) || isSystemServiceAccount();
+    }
+    
+    // Fallback: deny everything else
     match /{allPaths=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 } 

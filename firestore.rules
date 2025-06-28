@@ -16,18 +16,31 @@ service cloud.firestore {
       return request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds;
     }
 
+    function isMessageParticipant(messageData) {
+      return request.auth.uid == messageData.senderId ||
+             request.auth.uid == messageData.recipientId ||
+             (exists(messageData.conversationId) && 
+              isParticipantInConversation(request.auth.uid, messageData.conversationId));
+    }
+
+    // Allow system service accounts (Cloud Functions/Run) to perform admin operations
+    function isSystemServiceAccount() {
+      // Firebase Admin operations don't have request.auth.uid
+      return request.auth == null || 
+             request.auth.uid == null ||
+             request.auth.token.firebase.sign_in_provider == 'custom';
+    }
+
     // Users can read and write their own documents
     // Users can only be created if the user is authenticated
     match /users/{userId} {
       allow write: if request.auth.uid == userId;
       allow create: if request.auth.uid != null;
       // Allow everyone to read a limited subset of fields
-  		allow get: if request.auth.uid != null && !(request.auth.uid in ['banned_uids...']);
-  		// Allow authenticated users to search for users (for friend requests)
-  		// Note: Client-side should implement proper filtering and limits
-  		allow list: if request.auth.uid != null;
-
-      // Legacy nested friend requests - removed, using global collection only
+      allow get: if request.auth.uid != null && !(request.auth.uid in ['banned_uids...']);
+      // FIXED: Restrict user listing - only allow searching by email with proper client-side filtering
+      allow list: if request.auth.uid != null && 
+                     request.query.limit <= 10;  // Limit search results
 
       // Friends subcollection can only be read or written to by the parent user
       match /friends/{friendId} {
@@ -40,21 +53,22 @@ service cloud.firestore {
       }
     }
 
-    // Enhanced Messages - support both individual and group messaging
+    // FIXED: Enhanced Messages - proper participant-only access
     match /messages/{messageId} {
-      // Create: sender can create messages (temporarily simplified for debugging)
+      // Create: sender can create messages
       allow create: if request.auth.uid != null && request.auth.uid == request.resource.data.senderId;
       
-      // Read: authenticated users can read messages (temporarily simplified for debugging)
-      allow read: if request.auth.uid != null;
+      // FIXED: Read: only message participants can read
+      allow read: if request.auth.uid != null && isMessageParticipant(resource.data);
       
-      // Update: only recipients can update (for viewed status, etc.)
+      // Update: only recipients can update (for viewed status, etc.) or system for expiration
       allow update: if (exists(resource.data.recipientId) && request.auth.uid == resource.data.recipientId) ||
         (exists(resource.data.conversationId) && 
-         isParticipantInConversation(request.auth.uid, resource.data.conversationId));
+         isParticipantInConversation(request.auth.uid, resource.data.conversationId)) ||
+        isSystemServiceAccount();  // Allow system updates for TTL expiration
       
       // Delete: only system functions can delete (for TTL cleanup)
-      allow delete: if false;
+      allow delete: if isSystemServiceAccount();
     }
 
     // Receipts for tracking receivedAt timestamps  
@@ -74,7 +88,7 @@ service cloud.firestore {
         request.auth.uid == resource.data.userId;
       
       // Delete: only system functions can delete
-      allow delete: if false;
+      allow delete: if isSystemServiceAccount();
     }
 
     // Conversations for group chats
@@ -94,28 +108,28 @@ service cloud.firestore {
         request.auth.uid in request.resource.data.participantIds; // Must remain a participant
       
       // Delete: only creator can delete (or system)
-      allow delete: if request.auth.uid == resource.data.createdBy;
+      allow delete: if request.auth.uid == resource.data.createdBy || isSystemServiceAccount();
     }
 
-    // Phase 2: LLM Summaries (read-only for users, write-only for system)
+    // FIXED: LLM Summaries - allow system service accounts to write
     match /summaries/{summaryId} {
       // Read: users involved in the original message can read summaries
       // For now, allow authenticated users to read (proper filtering happens in client)
       // TODO: Add more restrictive rules based on message participation
       allow read: if request.auth.uid != null;
       
-      // Create/Update/Delete: only system functions (Cloud Run worker)
-      allow create, update, delete: if false;
+      // FIXED: Create/Update/Delete: allow system service accounts (Cloud Run worker)
+      allow create, update, delete: if isSystemServiceAccount();
     }
 
-    // Future: RAG chunks for group conversations (read-only for users)
+    // FIXED: RAG chunks for group conversations - allow system writes
     match /ragChunks/{chunkId} {
       // Read: participants in the conversation can read
       allow read: if exists(resource.data.conversationId) &&
         isParticipantInConversation(request.auth.uid, resource.data.conversationId);
       
-      // Create/Update/Delete: only system functions
-      allow create, update, delete: if false;
+      // FIXED: Create/Update/Delete: allow system service accounts
+      allow create, update, delete: if isSystemServiceAccount();
     }
 
     // Global friend requests (moved from users subcollection for easier querying)

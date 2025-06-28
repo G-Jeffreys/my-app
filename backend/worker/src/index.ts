@@ -188,29 +188,11 @@ app.post('/moderate-summary-job', async (req: express.Request, res: express.Resp
           // 2. Use video-specific AI models
           // 3. Analyze audio content as well
           
-          // For now, we'll generate a video-aware summary based on context
-          const videoProcessingResponse = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            messages: [
-              {
-                role: 'system',
-                content: `You are analyzing a video message. Create a brief, neutral summary that indicates this is video content. Consider:
-                - This is a video message (not image or text)
-                - Videos typically show motion, action, or moments
-                - Keep summary under 50 tokens
-                - Be factual and neutral
-                - If there's accompanying text, incorporate it appropriately`
-              },
-              {
-                role: 'user',
-                content: `Generate a summary for a video message${contentText ? ` with text: "${contentText}"` : ' (no accompanying text)'}.`
-              }
-            ],
-            max_tokens: 50,
-            temperature: 0.1
-          });
-
-          mediaCaption = videoProcessingResponse.choices[0]?.message?.content || 'Video message';
+          // For now, use a simple, honest caption since we don't have video analysis
+          // TODO: Implement proper video frame extraction and analysis
+          mediaCaption = contentText.trim() 
+            ? `Video message: ${contentText.trim()}` 
+            : 'User shared a video message';
           logger.info('✅ Video summary generated', { messageId, summary: mediaCaption });
           
           // Additional video-specific logging for debugging

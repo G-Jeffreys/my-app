@@ -3,7 +3,7 @@ import {
   useCameraPermissions,
   useMicrophonePermissions,
 } from "expo-camera";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
   ActivityIndicator,
@@ -19,11 +19,13 @@ import Header from '../../components/Header';
 
 export default function CameraScreen() {
   const router = useRouter();
+  const { conversationId } = useLocalSearchParams<{ conversationId?: string }>();
   const [facing, setFacing] = useState<"front" | "back">("back");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTimeLeft, setRecordingTimeLeft] = useState(10);
   const [permissionStatus, setPermissionStatus] = useState<'checking' | 'granted' | 'denied' | 'requesting'>('checking');
   const [webStream, setWebStream] = useState<MediaStream | null>(null);
+  const [isEmulator, setIsEmulator] = useState(false);
   
   // Refs for different camera types
   const cameraRef = useRef<CameraView>(null);
@@ -31,13 +33,40 @@ export default function CameraScreen() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
-  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [microphonePermission, requestMicrophonePermission] = useMicrophonePermissions();
 
   console.log('[CameraScreen] Component rendered');
   console.log('[CameraScreen] Platform:', Platform.OS);
+  console.log('[CameraScreen] ConversationId:', conversationId);
+
+  // Detect if running on emulator (Android)
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      // Common emulator detection methods
+      const isEmulatorLikely = 
+        // Check for common emulator characteristics
+        Platform.constants.Brand?.toLowerCase().includes('generic') ||
+        Platform.constants.Model?.toLowerCase().includes('emulator') ||
+        Platform.constants.Model?.toLowerCase().includes('sdk') ||
+        // Additional checks
+        Platform.constants.Manufacturer?.toLowerCase() === 'google' && 
+        Platform.constants.Model?.toLowerCase().includes('sdk');
+      
+      console.log('[CameraScreen] Emulator detection - Brand:', Platform.constants.Brand);
+      console.log('[CameraScreen] Emulator detection - Model:', Platform.constants.Model);
+      console.log('[CameraScreen] Emulator detection - Manufacturer:', Platform.constants.Manufacturer);
+      console.log('[CameraScreen] Is likely emulator:', isEmulatorLikely);
+      
+      setIsEmulator(isEmulatorLikely);
+      
+      if (isEmulatorLikely) {
+        console.warn('[CameraScreen] Running on Android emulator - video recording may not work properly');
+      }
+    }
+  }, []);
 
   // Web permission handling
   const checkWebPermissions = async () => {
@@ -256,7 +285,11 @@ export default function CameraScreen() {
         // Navigate to preview with the blob URL
         router.push({
           pathname: "/(protected)/preview",
-          params: { uri: url, type: "video" },
+          params: { 
+            uri: url, 
+            type: "video",
+            ...(conversationId && { conversationId })
+          },
         });
       };
 
@@ -306,15 +339,45 @@ export default function CameraScreen() {
   const startMobileRecording = async () => {
     if (Platform.OS === 'web' || !cameraRef.current) return;
     
-    setIsRecording(true);
-    setRecordingTimeLeft(10);
+    // Prevent recording on emulators
+    if (isEmulator) {
+      console.warn('[CameraScreen] Recording blocked - running on emulator');
+      Alert.alert(
+        "Emulator Detected", 
+        "Video recording is not supported on Android emulators. Please use a physical device for video recording.",
+        [{ text: "OK" }]
+      );
+      return;
+    }
+    
+    console.log('[CameraScreen] Starting mobile recording...');
     
     try {
-      const recordingPromise = cameraRef.current.recordAsync({
-        maxDuration: 10,
-      });
+      // Set recording state first
+      setIsRecording(true);
+      setRecordingTimeLeft(10);
       
-      // Start countdown timer
+      // Configure recording options with better Android support
+      const recordingOptions = {
+        maxDuration: 10,
+        quality: '720p' as const,
+        // Add Android-specific options
+        ...(Platform.OS === 'android' && {
+          videoBitrate: 5000000, // 5 Mbps
+          mirror: facing === 'front',
+        }),
+      };
+      
+      console.log('[CameraScreen] Recording options:', recordingOptions);
+      
+      // Start recording
+      const recordingPromise = cameraRef.current.recordAsync(recordingOptions);
+      
+      if (!recordingPromise) {
+        throw new Error('Failed to start recording - recordAsync returned null');
+      }
+      
+      // Only start timer after recording promise is created
       recordingTimerRef.current = setInterval(() => {
         setRecordingTimeLeft(prev => {
           if (prev <= 1) {
@@ -325,20 +388,45 @@ export default function CameraScreen() {
         });
       }, 1000);
       
-      if (recordingPromise) {
-        const video = await recordingPromise;
-        console.log('[CameraScreen] Mobile recording completed:', video?.uri);
-        if (video) {
-          router.push({
-            pathname: "/(protected)/preview",
-            params: { uri: video.uri, type: "video" },
-          });
+      console.log('[CameraScreen] Recording started, waiting for completion...');
+      
+      // Wait for recording to complete
+      const video = await recordingPromise;
+      console.log('[CameraScreen] Mobile recording completed:', video?.uri);
+      
+      if (video && video.uri) {
+        console.log('[CameraScreen] Navigating to preview with video URI');
+        router.push({
+          pathname: "/(protected)/preview",
+          params: { 
+            uri: video.uri, 
+            type: "video",
+            ...(conversationId && { conversationId })
+          },
+        });
+      } else {
+        throw new Error('Recording completed but no video URI received');
+      }
+      
+    } catch (error) {
+      console.error("[CameraScreen] Mobile recording failed:", error);
+      
+      // Provide more specific error messages
+      let errorMessage = "Failed to record video. Please try again.";
+      
+      if (error instanceof Error) {
+        if (error.message.includes('not granted') || error.message.includes('permission')) {
+          errorMessage = "Camera or microphone permission denied. Please check your device settings.";
+        } else if (error.message.includes('busy') || error.message.includes('already')) {
+          errorMessage = "Camera is busy. Please wait and try again.";
+        } else if (error.message.includes('emulator') || error.message.includes('simulator')) {
+          errorMessage = "Video recording may not work properly on emulators. Try on a physical device.";
         }
       }
-    } catch (e) {
-      console.error("[CameraScreen] Mobile recording failed:", e);
-      Alert.alert("Recording Error", "Failed to record video. Please try again.");
+      
+      Alert.alert("Recording Error", errorMessage);
     } finally {
+      // Always cleanup state
       setIsRecording(false);
       if (recordingTimerRef.current) {
         clearInterval(recordingTimerRef.current);
@@ -350,10 +438,14 @@ export default function CameraScreen() {
   const stopMobileRecording = () => {
     if (Platform.OS === 'web' || !cameraRef.current) return;
     
+    console.log('[CameraScreen] Stopping mobile recording...');
+    
     try {
       cameraRef.current.stopRecording();
+      console.log('[CameraScreen] Stop recording called successfully');
     } catch (error) {
       console.error('[CameraScreen] Error stopping mobile recording:', error);
+      // Don't show alert here as this is often called automatically
     }
   };
 
@@ -387,7 +479,11 @@ export default function CameraScreen() {
         console.log('[CameraScreen] Web photo taken, data URL length:', imageSrc.length);
         router.push({
           pathname: "/(protected)/preview",
-          params: { uri: imageSrc, type: "image" },
+          params: { 
+            uri: imageSrc, 
+            type: "image",
+            ...(conversationId && { conversationId })
+          },
         });
       } else {
         console.error('[CameraScreen] Failed to capture screenshot');
@@ -408,7 +504,11 @@ export default function CameraScreen() {
       if (photo) {
         router.push({
           pathname: "/(protected)/preview",
-          params: { uri: photo.uri, type: "image" },
+          params: { 
+            uri: photo.uri, 
+            type: "image",
+            ...(conversationId && { conversationId })
+          },
         });
       }
     } catch (e) {
@@ -585,8 +685,25 @@ export default function CameraScreen() {
           style={styles.camera}
           facing={facing}
           videoQuality={"720p"}
+          mode="video"
+          enableTorch={false}
+          {...(Platform.OS === 'android' && {
+            ratio: "16:9",
+          })}
         >
           <View style={styles.cameraOverlay}>
+            {/* Emulator Warning */}
+            {isEmulator && (
+              <View style={styles.emulatorWarning}>
+                <Text style={styles.emulatorWarningText}>
+                  ⚠️ Emulator Detected
+                </Text>
+                <Text style={styles.emulatorWarningSubtext}>
+                  Video recording may not work properly on emulators. For best results, use a physical device.
+                </Text>
+              </View>
+            )}
+            
             <View style={styles.topControls}>
               <TouchableOpacity style={styles.controlButton} onPress={toggleCameraFacing}>
                 <Text style={styles.controlText}>🔄 Flip</Text>
@@ -607,8 +724,10 @@ export default function CameraScreen() {
                 style={[
                   styles.recordButton,
                   isRecording && styles.recordButtonActive,
+                  isEmulator && styles.recordButtonDisabled,
                 ]}
                 onPress={isRecording ? stopMobileRecording : startMobileRecording}
+                disabled={isEmulator}
               >
                 <View style={[
                   styles.recordButtonInner,
@@ -616,6 +735,9 @@ export default function CameraScreen() {
                 ]} />
                 {isRecording && (
                   <Text style={styles.recordingLabel}>Recording... {recordingTimeLeft}s</Text>
+                )}
+                {isEmulator && !isRecording && (
+                  <Text style={styles.disabledLabel}>Emulator</Text>
                 )}
               </TouchableOpacity>
               
@@ -763,6 +885,10 @@ const styles = StyleSheet.create({
   recordButtonActive: {
     backgroundColor: "rgba(220, 38, 38, 0.9)",
   },
+  recordButtonDisabled: {
+    backgroundColor: "rgba(128, 128, 128, 0.5)",
+    opacity: 0.6,
+  },
   recordButtonInner: {
     width: 30,
     height: 30,
@@ -825,5 +951,33 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 40,
     paddingBottom: 40,
+  },
+  emulatorWarning: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    padding: 16,
+    backgroundColor: "rgba(255, 0, 0, 0.8)",
+    borderBottomWidth: 1,
+    borderBottomColor: "#fff",
+  },
+  emulatorWarningText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 8,
+  },
+  emulatorWarningSubtext: {
+    color: "#fff",
+    fontSize: 14,
+  },
+  disabledLabel: {
+    position: "absolute",
+    bottom: -30,
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "600",
+    textAlign: "center",
   },
 }); 

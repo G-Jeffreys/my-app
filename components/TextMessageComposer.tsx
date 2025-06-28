@@ -87,10 +87,12 @@ const TextMessageComposer: React.FC<TextMessageComposerProps> = ({
         ...(recipientId ? { recipientId } : {}),
         ...(conversationId ? { conversationId } : {}),
         
-        // Future-proofing flags
+        // Phase 2 default lifecycle & LLM flags
         hasSummary: false,
         summaryGenerated: false,
         ephemeralOnly: false,
+        delivered: true, // Default to delivered, AI pipeline may change this if content is blocked
+        blocked: false,   // Will remain false; backend sets true if moderation fails
       };
 
       const messageRef = await addDoc(collection(firestore, 'messages'), messageData);

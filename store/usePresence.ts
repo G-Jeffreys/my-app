@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
+import { ref, onValue, set, onDisconnect, serverTimestamp } from 'firebase/database';
 import { database } from '../lib/firebase';
 import { useAuth } from './useAuth';
 
@@ -12,6 +13,11 @@ export const usePresence = () => {
       return;
     }
 
+    console.log('[Presence] Presence temporarily disabled - to enable, create Firebase Realtime Database');
+    return; // Temporarily disable presence functionality
+
+    // UNCOMMENT BELOW WHEN FIREBASE REALTIME DATABASE IS CREATED
+    /*
     console.log('[Presence] Setting up presence for user:', user.uid);
 
     if (Platform.OS === 'web') {
@@ -21,39 +27,65 @@ export const usePresence = () => {
       return;
     }
 
-    // For mobile, use actual Firebase Realtime Database
+    // Check if database is properly initialized
+    if (!database) {
+      console.error('[Presence] Firebase database not initialized');
+      return;
+    }
+
+    // For mobile, use actual Firebase Realtime Database with v9+ API
     try {
-      const myStatusRef = database.ref('status/' + user.uid);
+      console.log('[Presence] Setting up Firebase Realtime Database presence...');
+      
+      // Create references using the new v9+ API
+      const myStatusRef = ref(database, `status/${user.uid}`);
+      const connectedRef = ref(database, '.info/connected');
 
-      // We'll create a reference to the special '.info/connected' path in 
-      // Realtime Database. This path returns true when connected and false when not.
-      const connectedRef = database.ref('.info/connected');
+      console.log('[Presence] Database references created successfully');
 
-      const unsubscribe = connectedRef.on('value', (snap: any) => {
+      // Listen for connection status changes
+      const unsubscribe = onValue(connectedRef, (snap) => {
         if (snap.val() === true) {
           console.log('[Presence] Connected to Firebase, setting online status');
-          // We're connected (or reconnected)! Set our status.
-          myStatusRef.set({
+          
+          // Set online status
+          set(myStatusRef, {
             isOnline: true,
-            last_changed: database.ServerValue.TIMESTAMP,
+            last_changed: serverTimestamp(),
+            email: user.email,
+          }).then(() => {
+            console.log('[Presence] Online status set successfully');
+          }).catch((error) => {
+            console.error('[Presence] Error setting online status:', error);
           });
 
-          // When this client disconnects, set their status to offline.
-          myStatusRef.onDisconnect().set({
+          // Set up offline status for when this client disconnects
+          onDisconnect(myStatusRef).set({
             isOnline: false,
-            last_changed: database.ServerValue.TIMESTAMP,
+            last_changed: serverTimestamp(),
+            email: user.email,
+          }).then(() => {
+            console.log('[Presence] Offline disconnect handler set successfully');
+          }).catch((error) => {
+            console.error('[Presence] Error setting disconnect handler:', error);
           });
         } else {
           console.log('[Presence] Disconnected from Firebase');
         }
+      }, (error) => {
+        console.error('[Presence] Error listening to connection status:', error);
       });
 
       return () => {
         console.log('[Presence] Cleaning up presence listeners');
-        connectedRef.off('value', unsubscribe);
+        if (unsubscribe) {
+          unsubscribe();
+        }
       };
     } catch (error) {
       console.error('[Presence] Error setting up presence:', error);
+      console.error('[Presence] Error details:', JSON.stringify(error, null, 2));
     }
+    */
   }, [user]);
 }; 

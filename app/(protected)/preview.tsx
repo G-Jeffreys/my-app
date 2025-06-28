@@ -1,4 +1,4 @@
-import { Video, ResizeMode } from "expo-av";
+import { useVideoPlayer, VideoView, VideoSource } from "expo-video";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
 import {
@@ -16,6 +16,9 @@ import {
   collection,
   addDoc,
   serverTimestamp,
+  doc,
+  getDoc,
+  setDoc,
 } from "firebase/firestore";
 import { Auth } from "firebase/auth";
 import { firestore, storage, auth } from "../../lib/firebase";
@@ -28,9 +31,10 @@ import { DEFAULT_TTL_PRESET, TtlPreset } from "../../config/messaging";
 export default function PreviewScreen() {
   const router = useRouter();
   const { user } = useAuth();
-  const { uri, type } = useLocalSearchParams<{
+  const { uri, type, conversationId } = useLocalSearchParams<{
     uri: string;
     type: "image" | "video";
+    conversationId?: string;
   }>();
   const [isUploading, setIsUploading] = useState(false);
   // TTL state management - initialize with user's default or system default
@@ -42,7 +46,8 @@ export default function PreviewScreen() {
     hasUri: !!uri,
     mediaType: type,
     selectedTtl,
-    userDefaultTtl: user?.defaultTtl
+    userDefaultTtl: user?.defaultTtl,
+    conversationId: conversationId
   });
 
   if (!uri) {
@@ -110,6 +115,108 @@ export default function PreviewScreen() {
     });
   };
 
+  const handleSendToGroup = async () => {
+    if (!auth.currentUser || !conversationId) return;
+    setIsUploading(true);
+
+    console.log('[PreviewScreen] Sending media to group', {
+      conversationId,
+      mediaType: type,
+      selectedTtl,
+      userId: auth.currentUser.uid
+    });
+
+    try {
+      // 1. Upload the media file to Firebase Storage
+      console.log('[PreviewScreen] Starting media upload...');
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      const storageRef = ref(
+        storage,
+        `media/${auth.currentUser.uid}/${Date.now()}`
+      );
+      await uploadBytes(storageRef, blob);
+      const downloadURL = await getDownloadURL(storageRef);
+      console.log('[PreviewScreen] Media uploaded successfully', { downloadURL });
+
+      // 2. Create a group message document
+      console.log('[PreviewScreen] Creating group message document...');
+      const messageData = {
+        senderId: auth.currentUser.uid,
+        conversationId: conversationId,
+        mediaURL: downloadURL,
+        mediaType: type,
+        sentAt: serverTimestamp(),
+        ttlPreset: selectedTtl,
+        text: null,
+        
+        // Phase 2 default lifecycle & LLM flags
+        hasSummary: false,
+        summaryGenerated: false,
+        ephemeralOnly: false,
+        delivered: true,
+        blocked: false,
+      };
+
+      const messageRef = await addDoc(collection(firestore, 'messages'), messageData);
+      console.log('[PreviewScreen] Group message created successfully:', messageRef.id);
+
+      // 3. Create receipts for all group participants
+      await createGroupReceipts(messageRef.id, conversationId, auth.currentUser.uid);
+
+      console.log('[PreviewScreen] Group message sent successfully with TTL:', selectedTtl);
+      setIsUploading(false);
+      router.replace("/(protected)/home");
+    } catch (error) {
+      console.error("[PreviewScreen] Failed to send group media:", error);
+      Alert.alert("Error", "Failed to send your message to the group. Please try again.");
+      setIsUploading(false);
+    }
+  };
+
+  // Helper function to create receipts for group messages
+  const createGroupReceipts = async (messageId: string, conversationId: string, senderId: string) => {
+    try {
+      console.log('[PreviewScreen] Creating group receipts for:', { messageId, conversationId });
+      
+      // Get conversation participants
+      const conversationRef = doc(firestore, 'conversations', conversationId);
+      const conversationSnap = await getDoc(conversationRef);
+      
+      if (!conversationSnap.exists()) {
+        throw new Error('Conversation not found');
+      }
+      
+      const conversationData = conversationSnap.data();
+      const participantIds = conversationData.participantIds || [];
+      
+      console.log('[PreviewScreen] Found participants:', { count: participantIds.length });
+      
+      // Create receipts for all participants except sender
+      const receiptPromises = participantIds
+        .filter((participantId: string) => participantId !== senderId)
+        .map(async (participantId: string) => {
+          const receiptId = `${messageId}_${participantId}`;
+          const receiptData = {
+            messageId,
+            userId: participantId,
+            conversationId,
+            receivedAt: serverTimestamp(),
+            viewedAt: null,
+          };
+          
+          return setDoc(doc(firestore, 'receipts', receiptId), receiptData);
+        });
+      
+      await Promise.all(receiptPromises);
+      console.log('[PreviewScreen] Group receipts created:', { count: receiptPromises.length });
+      
+    } catch (error) {
+      console.error('[PreviewScreen] Error creating group receipts:', error);
+      // Don't throw - message was sent successfully, receipt creation is secondary
+    }
+  };
+
   const handleTtlChange = (newTtl: TtlPreset) => {
     console.log('[PreviewScreen] TTL changed', { from: selectedTtl, to: newTtl });
     setSelectedTtl(newTtl);
@@ -124,12 +231,10 @@ export default function PreviewScreen() {
         <Image source={{ uri }} style={styles.media} resizeMode="contain" />
       ) : (
         <PlatformVideo
-          source={{ uri }}
-          style={styles.media}
-          useNativeControls
-          resizeMode={ResizeMode.CONTAIN}
-          isLooping
-          shouldPlay
+          source={{ uri: uri } as VideoSource}
+          style={styles.fullVideo}
+          contentFit="contain"
+          nativeControls={true}
         />
       )}
 
@@ -161,11 +266,13 @@ export default function PreviewScreen() {
           <Text style={styles.buttonText}>Retake</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={navigateToSelectFriend}
+          onPress={conversationId ? handleSendToGroup : navigateToSelectFriend}
           style={[styles.button, styles.sendButton]}
           disabled={isUploading}
         >
-          <Text style={styles.buttonText}>Send to...</Text>
+          <Text style={styles.buttonText}>
+            {conversationId ? 'Send to Group' : 'Send to...'}
+          </Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -227,5 +334,8 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 16,
     fontWeight: "bold",
+  },
+  fullVideo: {
+    flex: 1,
   },
 });

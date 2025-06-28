@@ -9,10 +9,12 @@
 
 import {setGlobalOptions} from "firebase-functions";
 import * as logger from "firebase-functions/logger";
-import {onDocumentUpdated} from "firebase-functions/v2/firestore";
+import {onDocumentUpdated, onDocumentCreated} from "firebase-functions/v2/firestore";
 import * as admin from "firebase-admin";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {onRequest} from "firebase-functions/v2/https";
+// Cloud Tasks client for enqueuing moderation jobs
+// Using dynamic import to avoid CommonJS/ESM issues
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
@@ -355,3 +357,102 @@ export const generateMessageSummary = onDocumentCreated(
   }
 );
 */
+
+/**
+ * T1.1 – enqueueModerationJob
+ * Firestore onCreate trigger that fires for every newly created message.
+ * It filters out messages that are either marked `ephemeralOnly`, already
+ * have `summaryGenerated==true`, or are system messages. For qualifying
+ * messages we push a task to Cloud Tasks so the `moderateAndSummarize`
+ * Cloud Run worker can process it asynchronously.
+ */
+// Note: Import path needs to be adjusted for functions deployment
+// For now, we'll define the config inline to avoid path issues
+const TASK_QUEUE_CONFIG = {
+  LOCATION: process.env.TASK_QUEUE_LOCATION ?? 'us-central1',
+  QUEUE_NAME: process.env.MODERATION_TASK_QUEUE_NAME ?? 'moderate-summary-queue',
+  WORKER_ENDPOINT: process.env.MODERATION_WORKER_URL ?? 
+    'https://moderation-worker-435345795137.us-central1.run.app/moderate-summary-job',
+};
+
+export const enqueueModerationJob = onDocumentCreated(
+  "messages/{messageId}",
+  async (event) => {
+    try {
+      // Dynamic import of CloudTasksClient
+      const { CloudTasksClient } = await import("@google-cloud/tasks");
+      
+      const message = event.data?.data();
+
+      logger.info("📩 New message created – evaluating for queue", {
+        messageId: event.params.messageId,
+        senderId: message?.senderId,
+        mediaType: message?.mediaType,
+      });
+
+      if (!message) {
+        logger.warn("No message data; exiting enqueue job");
+        return;
+      }
+
+      // Skip if message is explicitly marked as `ephemeralOnly`
+      if (message.ephemeralOnly) {
+        logger.info("🚫 Message marked ephemeralOnly – skipping", {
+          messageId: event.params.messageId,
+        });
+        return;
+      }
+
+      // Skip if summary already generated (idempotency)
+      if (message.summaryGenerated) {
+        logger.info("↩️ summaryGenerated already true – skipping", {
+          messageId: event.params.messageId,
+        });
+        return;
+      }
+
+      // Build task payload
+      const payload = {
+        messageId: event.params.messageId,
+        conversationId: message.conversationId ?? null,
+        senderId: message.senderId,
+        mediaType: message.mediaType,
+        timestamp: Date.now(),
+      };
+
+      const client = new CloudTasksClient();
+      const parent = client.queuePath(
+        process.env.GCP_PROJECT || 
+        process.env.GCLOUD_PROJECT || "_",
+        TASK_QUEUE_CONFIG.LOCATION,
+        TASK_QUEUE_CONFIG.QUEUE_NAME
+      );
+
+      const task = {
+        httpRequest: {
+          httpMethod: "POST" as const,
+          url: TASK_QUEUE_CONFIG.WORKER_ENDPOINT,
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: Buffer.from(JSON.stringify(payload))
+            .toString("base64"),
+        },
+        // Up to 3 retries handled by Cloud Tasks config
+      };
+
+      const [response] = await client.createTask({ parent, task });
+
+      logger.info("✅ Enqueued moderation task", {
+        messageId: event.params.messageId,
+        taskName: response.name,
+      });
+    } catch (error) {
+      logger.error("❌ Failed to enqueue moderation task", {
+        error: (error as Error).message,
+        stack: (error as Error).stack,
+        messageId: event.params.messageId,
+      });
+    }
+  }
+);

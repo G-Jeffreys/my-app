@@ -228,10 +228,12 @@ export default function SelectFriendScreen() {
         // Phase 3: Only individual friend messaging supported in this flow
         recipientId: recipient.id, // recipient.type is always 'friend' now
         
-        // Future-proofing flags
+        // Phase 2 default lifecycle & LLM flags
         hasSummary: false,
         summaryGenerated: false,
         ephemeralOnly: false,
+        delivered: true, // Default to delivered, AI pipeline may change this if content is blocked
+        blocked: false,
       };
 
       const messageRef = await addDoc(collection(firestore, 'messages'), messageData);

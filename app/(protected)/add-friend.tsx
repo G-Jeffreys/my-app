@@ -10,7 +10,7 @@ import {
   Image,
 } from "react-native";
 import React, { useState } from "react";
-import { collection, query, where, getDocs, setDoc, doc } from "firebase/firestore";
+import { collection, query, where, getDocs, setDoc, doc, Firestore, limit } from "firebase/firestore";
 import { firestore, auth } from "../../lib/firebase";
 import { User } from "../../models/firestore/user";
 import Header from "../../components/Header";
@@ -22,31 +22,73 @@ export default function AddFriendScreen() {
   const [loading, setLoading] = useState(false);
   const [requesting, setRequesting] = useState<Record<string, boolean>>({});
 
+  console.log('[AddFriend] Component loaded - auth user:', auth.currentUser?.email);
+  console.log('[AddFriend] Firebase auth state ready:', !!auth.currentUser);
+
   const handleSearch = async () => {
     if (searchEmail.trim() === "") {
       Alert.alert("Error", "Please enter an email to search.");
       return;
     }
+    
+    console.log('[AddFriend] Starting user search for email:', searchEmail.toLowerCase());
+    console.log('[AddFriend] Current user authenticated:', !!auth.currentUser);
+    console.log('[AddFriend] Current user UID:', auth.currentUser?.uid);
+    
     setLoading(true);
     setSearchResults([]);
+    
     try {
       const q = query(
         collection(firestore, "users"),
-        where("email", "==", searchEmail.toLowerCase())
+        where("email", "==", searchEmail.toLowerCase()),
+        limit(10) // Safety limit to prevent excessive queries
       );
+      
+      console.log('[AddFriend] Executing Firestore query...');
       const querySnapshot = await getDocs(q);
+      console.log('[AddFriend] Query completed, found docs:', querySnapshot.size);
+      
       const users: User[] = querySnapshot.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() } as User)
+        (doc) => {
+          console.log('[AddFriend] Processing user doc:', doc.id, doc.data());
+          return { id: doc.id, ...doc.data() } as User;
+        }
       );
+      
       // Filter out the current user from search results
-      const filteredUsers = users.filter(user => user.id !== auth.currentUser?.uid);
+      const filteredUsers = users.filter(user => {
+        const isCurrentUser = user.id === auth.currentUser?.uid;
+        console.log('[AddFriend] User filtering - ID:', user.id, 'isCurrentUser:', isCurrentUser);
+        return !isCurrentUser;
+      });
+      
+      console.log('[AddFriend] Final filtered results:', filteredUsers.length);
+      console.log('[AddFriend] User emails found:', filteredUsers.map(u => u.email));
       setSearchResults(filteredUsers);
+      
       if (filteredUsers.length === 0) {
+        console.log('[AddFriend] No results found for email:', searchEmail);
         Alert.alert("No Results", "No user found with that email.");
+      } else {
+        console.log('[AddFriend] Search successful, showing results');
       }
-    } catch (error) {
-      console.error("Error searching for user:", error);
-      Alert.alert("Error", "An error occurred while searching.");
+    } catch (error: any) {
+      console.error("[AddFriend] Error searching for user:", error);
+      console.error("[AddFriend] Error code:", error?.code);
+      console.error("[AddFriend] Error message:", error?.message);
+      console.error("[AddFriend] Full error object:", JSON.stringify(error, null, 2));
+      
+      let errorMessage = "An error occurred while searching.";
+      if (error?.code === 'permission-denied') {
+        errorMessage = "Permission denied. Please check your authentication and try again.";
+      } else if (error?.code === 'unavailable') {
+        errorMessage = "Service temporarily unavailable. Please try again later.";
+      } else if (error?.message) {
+        errorMessage = `Search failed: ${error.message}`;
+      }
+      
+      Alert.alert("Search Error", errorMessage);
     } finally {
       setLoading(false);
     }

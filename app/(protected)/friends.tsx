@@ -18,6 +18,7 @@ import {
   doc,
   writeBatch,
   getDoc,
+  updateDoc,
 } from "firebase/firestore";
 import { firestore, auth } from "../../lib/firebase";
 import { Auth } from "firebase/auth";
@@ -108,45 +109,39 @@ export default function FriendsScreen() {
     if (!auth.currentUser) return;
     
     console.log('[FriendsScreen] Accepting friend request from:', request.senderId);
+    console.log('[FriendsScreen] Request details:', {
+      id: request.id,
+      senderId: request.senderId,
+      recipientId: request.recipientId,
+      currentUserId: auth.currentUser.uid
+    });
+    
     try {
-      const batch = writeBatch(firestore);
-
-      // 1. Add friend to current user's friend list
-      const currentUserFriendRef = doc(
-        firestore,
-        "users",
-        auth.currentUser.uid,
-        "friends",
-        request.senderId
-      );
-      batch.set(currentUserFriendRef, {
-        friendId: request.senderId,
-        addedAt: new Date(),
-      });
-
-      // 2. Add current user to sender's friend list
-      const senderFriendRef = doc(
-        firestore,
-        "users",
-        request.senderId,
-        "friends",
-        auth.currentUser.uid
-      );
-      batch.set(senderFriendRef, {
-        friendId: auth.currentUser.uid,
-        addedAt: new Date(),
-      });
-
-      // 3. Update the friend request status to 'accepted'
+      // Simply update the friend request status to 'accepted'
+      // The Cloud Function will handle creating friend documents and cleanup
       const requestRef = doc(firestore, "friendRequests", request.id);
-      batch.update(requestRef, { status: "accepted" });
-
-      await batch.commit();
-      console.log('[FriendsScreen] Friend request accepted successfully');
+      console.log('[FriendsScreen] Updating friend request status to accepted:', requestRef.path);
+      console.log('[FriendsScreen] Cloud Function will handle friend creation and cleanup');
+      
+      await updateDoc(requestRef, { status: "accepted" });
+      console.log('[FriendsScreen] ✅ Friend request accepted successfully');
       Alert.alert("Success", "Friend request accepted!");
-    } catch (error) {
-      console.error("[FriendsScreen] Error accepting friend request:", error);
-      Alert.alert("Error", "Failed to accept friend request.");
+    } catch (error: any) {
+      console.error("[FriendsScreen] ❌ Error accepting friend request:", error);
+      console.error("[FriendsScreen] Error code:", error?.code);
+      console.error("[FriendsScreen] Error message:", error?.message);
+      console.error("[FriendsScreen] Full error object:", JSON.stringify(error, null, 2));
+      
+      let errorMessage = "Failed to accept friend request.";
+      if (error?.code === 'permission-denied') {
+        errorMessage = "Permission denied. Unable to accept this friend request.";
+      } else if (error?.code === 'not-found') {
+        errorMessage = "Friend request not found or has been removed.";
+      } else if (error?.message) {
+        errorMessage = `Accept failed: ${error.message}`;
+      }
+      
+      Alert.alert("Error", errorMessage);
     }
   };
   

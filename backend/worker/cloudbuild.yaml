@@ -1,0 +1,43 @@
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build', 
+      '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/ai-worker/moderator:$BUILD_ID',
+      '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/ai-worker/moderator:latest',
+      '.'
+    ]
+
+  # Push the container image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'push', 
+      'us-central1-docker.pkg.dev/$PROJECT_ID/ai-worker/moderator:$BUILD_ID'
+    ]
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'push', 
+      'us-central1-docker.pkg.dev/$PROJECT_ID/ai-worker/moderator:latest'
+    ]
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args: [
+      'run', 'deploy', 'moderation-worker',
+      '--image', 'us-central1-docker.pkg.dev/$PROJECT_ID/ai-worker/moderator:$BUILD_ID',
+      '--region', 'us-central1',
+      '--platform', 'managed',
+      '--allow-unauthenticated',
+      '--memory', '1Gi',
+      '--cpu', '1',
+      '--concurrency', '10',
+      '--max-instances', '10',
+      '--set-env-vars', 'NODE_ENV=production',
+      '--quiet'
+    ]
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/ai-worker/moderator:$BUILD_ID'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/ai-worker/moderator:latest' 

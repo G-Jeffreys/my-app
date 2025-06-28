@@ -26,4 +26,12 @@ export interface Message {
   hasSummary?: boolean; // Flag to indicate if this message has an LLM summary
   summaryGenerated?: boolean; // Flag to track summary generation status
   ephemeralOnly?: boolean; // Flag to disable summary generation for this message
+  /**
+   * Lifecycle control flags introduced for Phase 2:
+   * – delivered: Message is safe (passed moderation) and can be rendered by clients.
+   * – blocked:   Message failed moderation and must not be shown or downloaded.
+   *   Only one of these should become true; both default to false on creation.
+   */
+  delivered?: boolean;
+  blocked?: boolean;
 } 

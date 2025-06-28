@@ -12,6 +12,9 @@ const envSchema = z.object({
   GOOGLE_IOS_CLIENT_ID: z.string(),
   GOOGLE_ANDROID_CLIENT_ID: z.string(),
   EXPO_CLIENT_ID: z.string(),
+  // GitHub OAuth credentials
+  GITHUB_CLIENT_ID: z.string(),
+  GITHUB_CLIENT_SECRET: z.string(),
 });
 
 export const env = envSchema.parse({
@@ -26,4 +29,7 @@ export const env = envSchema.parse({
   GOOGLE_IOS_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
   GOOGLE_ANDROID_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
   EXPO_CLIENT_ID: process.env.EXPO_PUBLIC_EXPO_CLIENT_ID,
+  // GitHub OAuth credentials
+  GITHUB_CLIENT_ID: process.env.EXPO_PUBLIC_GITHUB_CLIENT_ID,
+  GITHUB_CLIENT_SECRET: process.env.EXPO_PUBLIC_GITHUB_CLIENT_SECRET,
 });

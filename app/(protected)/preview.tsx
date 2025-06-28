@@ -1,4 +1,4 @@
-import { Video, ResizeMode } from "expo-av";
+import { useVideoPlayer, VideoView, VideoSource } from "expo-video";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
 import {
@@ -231,12 +231,10 @@ export default function PreviewScreen() {
         <Image source={{ uri }} style={styles.media} resizeMode="contain" />
       ) : (
         <PlatformVideo
-          source={{ uri }}
-          style={styles.media}
-          useNativeControls
-          resizeMode={ResizeMode.CONTAIN}
-          isLooping
-          shouldPlay
+          source={{ uri: uri } as VideoSource}
+          style={styles.fullVideo}
+          contentFit="contain"
+          nativeControls={true}
         />
       )}
 
@@ -336,5 +334,8 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 16,
     fontWeight: "bold",
+  },
+  fullVideo: {
+    flex: 1,
   },
 });

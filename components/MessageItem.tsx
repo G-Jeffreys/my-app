@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native";
-import { ResizeMode } from "expo-av";
+import { VideoContentFit } from "expo-video";
 import { useAuth } from "../store/useAuth";
 import { useCountdown } from "../hooks/useCountdown";
 import { useReceiptTracking } from "../hooks/useReceiptTracking";
@@ -134,14 +134,13 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
           {message.mediaType === "image" || message.mediaType === 'photo' ? (
             <Image source={{ uri: message.mediaURL || "" }} style={styles.media} />
           ) : message.mediaType === 'video' ? (
-            <PlatformVideo
-              ref={videoRef}
-              source={{ uri: message.mediaURL || "" }}
-              style={styles.media}
-              resizeMode={ResizeMode.COVER}
-              shouldPlay
-              isLooping
-            />
+                          <PlatformVideo
+                source={{ uri: message.mediaURL || "" }}
+                style={styles.media}
+                contentFit="cover"
+                shouldPlay
+                isLooping
+              />
           ) : null}
           
           {/* Render text content */}

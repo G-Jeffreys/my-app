@@ -23,16 +23,11 @@ service cloud.firestore {
       allow create: if request.auth.uid != null;
       // Allow everyone to read a limited subset of fields
   		allow get: if request.auth.uid != null && !(request.auth.uid in ['banned_uids...']);
-  		allow list: if false;  // still block listing all users
+  		// Allow authenticated users to search for users (for friend requests)
+  		// Note: Client-side should implement proper filtering and limits
+  		allow list: if request.auth.uid != null;
 
-      // Friend requests can be created by anyone, but can only be read by the sender or recipient.
-      // Sender can delete their own request. Recipient can update status.
-      match /friendRequests/{requestId} {
-        allow create: if request.auth.uid == request.resource.data.from;
-        allow read: if request.auth.uid == resource.data.from || request.auth.uid == resource.data.to;
-        allow update: if request.auth.uid == resource.data.to;
-        allow delete: if request.auth.uid == resource.data.from;
-      }
+      // Legacy nested friend requests - removed, using global collection only
 
       // Friends subcollection can only be read or written to by the parent user
       match /friends/{friendId} {

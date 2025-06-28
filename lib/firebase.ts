@@ -1,9 +1,10 @@
 import { initializeApp, getApp, getApps } from "firebase/app";
-import { getAuth, Auth } from "firebase/auth";
+import { getAuth, Auth, initializeAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import { getDatabase } from "firebase/database";
 import { Platform } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { env } from "../env";
 
 console.log('[Firebase] Initializing Firebase Web SDK for platform:', Platform.OS);
@@ -53,46 +54,93 @@ try {
   throw error;
 }
 
-// Initialize Auth - simple approach that works reliably
+// Initialize Auth with proper React Native persistence for Firebase v10
 let auth: Auth;
 try {
-  console.log('[Firebase] Initializing Auth service...');
-  auth = getAuth(app);
-  console.log('[Firebase] Auth service initialized successfully');
-  // Note: AsyncStorage persistence warning is expected with this approach
-  // This is due to Firebase v10 TypeScript export limitations with getReactNativePersistence
+  console.log('[Firebase] Initializing Auth service for platform:', Platform.OS);
+  
+  if (Platform.OS !== 'web') {
+    // For React Native, use initializeAuth with AsyncStorage persistence
+    console.log('[Firebase] Setting up React Native Auth with AsyncStorage persistence...');
+    try {
+      // Check if auth is already initialized
+      auth = getAuth(app);
+      console.log('[Firebase] Auth already initialized, using existing instance');
+    } catch (authError) {
+      // If not initialized, initialize with React Native persistence
+      console.log('[Firebase] Initializing new Auth instance with AsyncStorage persistence...');
+      // For Firebase v10 web SDK with React Native, use AsyncStorage directly
+      auth = initializeAuth(app, {
+        persistence: AsyncStorage as any,
+      });
+      console.log('[Firebase] Auth service initialized with AsyncStorage persistence');
+    }
+  } else {
+    // For web, use regular getAuth
+    console.log('[Firebase] Initializing web Auth...');
+    auth = getAuth(app);
+    console.log('[Firebase] Auth service initialized for web');
+  }
 } catch (error: any) {
   console.error('[Firebase] Auth initialization failed:', error);
   console.error('[Firebase] Error message:', error.message);
   console.error('[Firebase] Error code:', error.code);
-  throw error;
+  console.error('[Firebase] Error stack:', error.stack);
+  
+  // Fallback to basic auth if persistence setup fails
+  try {
+    console.log('[Firebase] Attempting fallback to basic auth...');
+    auth = getAuth(app);
+    console.log('[Firebase] Fallback to basic auth successful');
+  } catch (fallbackError: any) {
+    console.error('[Firebase] Fallback auth also failed:', fallbackError);
+    throw fallbackError;
+  }
 }
 
 // Initialize other Firebase services with error handling
 let firestore, storage, database;
 
 try {
+  console.log('[Firebase] Initializing Firestore...');
   firestore = getFirestore(app);
   console.log('[Firebase] Firestore initialized successfully');
 } catch (error: any) {
   console.error('[Firebase] Firestore initialization failed:', error);
+  throw error; // Firestore is critical, throw if it fails
 }
 
 try {
+  console.log('[Firebase] Initializing Storage...');
   storage = getStorage(app);
   console.log('[Firebase] Storage initialized successfully');
 } catch (error: any) {
   console.error('[Firebase] Storage initialization failed:', error);
+  console.warn('[Firebase] Continuing without Storage service');
 }
 
 try {
+  console.log('[Firebase] Initializing Realtime Database...');
   database = getDatabase(app);
   console.log('[Firebase] Database initialized successfully');
 } catch (error: any) {
   console.error('[Firebase] Database initialization failed:', error);
+  console.warn('[Firebase] Continuing without Realtime Database service');
 }
 
 console.log('[Firebase] All Firebase services initialization complete');
+console.log('[Firebase] Auth instance:', !!auth);
+console.log('[Firebase] Firestore instance:', !!firestore);
+console.log('[Firebase] Storage instance:', !!storage);
+console.log('[Firebase] Database instance:', !!database);
+
+// Validate that essential services are available
+if (!auth) {
+  throw new Error('[Firebase] Critical: Auth service failed to initialize');
+}
+if (!firestore) {
+  throw new Error('[Firebase] Critical: Firestore service failed to initialize');
+}
 
 // Export services
 export { app, auth, firestore, storage, database };

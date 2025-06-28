@@ -96,6 +96,25 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
     }
   }, [isOpened, isSender, receipt, markAsViewed, message.id, messageExpired]);
 
+  // Handle automatic closure when message expires while open
+  useEffect(() => {
+    if (messageExpired && isOpened && !isSender) {
+      logMessage('Message expired while open - auto-closing in 3 seconds', { 
+        messageId: message.id,
+        remaining,
+        ttl: message.ttlPreset 
+      });
+      
+      // Auto-close after 3 seconds to give user time to see expiration notice
+      const autoCloseTimer = setTimeout(() => {
+        logMessage('Auto-closing expired message', { messageId: message.id });
+        setIsOpened(false);
+      }, 3000);
+
+      return () => clearTimeout(autoCloseTimer);
+    }
+  }, [messageExpired, isOpened, isSender, message.id, remaining, message.ttlPreset]);
+
   // Hide expired messages immediately for better UX (server cleanup runs hourly)
   useEffect(() => {
     if (messageExpired && !isSender) {
@@ -145,8 +164,8 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
         <View style={styles.messageContent}>
           {/* Expired message indicator */}
           <View style={styles.expiredIndicator}>
-            <Text style={styles.expiredText}>🔒 Message Expired</Text>
-            <Text style={styles.expiredSubtext}>
+            <Text style={styles.expiredIndicatorText}>🔒 Message Expired</Text>
+            <Text style={styles.expiredIndicatorSubtext}>
               Content no longer available
             </Text>
           </View>
@@ -221,8 +240,14 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
           )}
           
           {/* TTL Countdown */}
-          <View style={styles.countdown}>
-            <Text style={styles.countdownText}>
+          <View style={[
+            styles.countdown,
+            messageExpired && styles.countdownExpired
+          ]}>
+            <Text style={[
+              styles.countdownText,
+              messageExpired && styles.countdownTextExpired
+            ]}>
               {messageExpired ? 'EXPIRED' : formatTime(remaining)}
             </Text>
           </View>
@@ -340,13 +365,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 8,
   },
-  expiredText: {
+  expiredIndicatorText: {
     color: 'white',
     fontWeight: 'bold',
     fontSize: 12,
     textAlign: 'center',
   },
-  expiredSubtext: {
+  expiredIndicatorSubtext: {
     color: 'white',
     fontSize: 10,
     textAlign: 'center',
@@ -375,10 +400,17 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
   },
+  countdownExpired: {
+    backgroundColor: "rgba(255, 107, 107, 0.9)", // Red background for expired
+  },
   countdownText: {
     color: "white",
     fontWeight: "bold",
     fontSize: 14,
+  },
+  countdownTextExpired: {
+    color: "white",
+    fontSize: 12, // Slightly smaller for "EXPIRED" text
   },
 });
 

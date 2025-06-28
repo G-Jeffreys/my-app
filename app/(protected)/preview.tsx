@@ -19,6 +19,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
 } from "firebase/firestore";
 import { Auth } from "firebase/auth";
 import { firestore, storage, auth } from "../../lib/firebase";
@@ -68,30 +69,30 @@ export default function PreviewScreen() {
     });
 
     try {
-      // 1. Upload the media file to Firebase Storage
+      // 1. Upload the media file to Firebase Storage FIRST
       console.log('[PreviewScreen] Starting media upload...');
       const response = await fetch(uri);
       const blob = await response.blob();
-      const storageRef = ref(
-        storage,
-        `media/${auth.currentUser.uid}/${Date.now()}`
-      );
+      const filename = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      const storageRef = ref(storage, `messages/${filename}`);
       await uploadBytes(storageRef, blob);
       const downloadURL = await getDownloadURL(storageRef);
-      console.log('[PreviewScreen] Media uploaded successfully', { downloadURL });
+      console.log('[PreviewScreen] Media uploaded successfully', { downloadURL, path: `messages/${filename}` });
 
-      // 2. Create a new message document in Firestore
-      console.log('[PreviewScreen] Creating message document...');
-      await addDoc(collection(firestore, "messages"), {
+      // 2. Create message document with complete data (including mediaURL)
+      console.log('[PreviewScreen] Creating message document with media URL...');
+      const messageRef = await addDoc(collection(firestore, "messages"), {
         senderId: auth.currentUser.uid,
-        recipientId: recipientId, // This needs to be updated for group chat later
-        mediaURL: downloadURL,
+        recipientId: recipientId,
+        mediaURL: downloadURL, // ✅ Now has the actual URL when Firebase Function triggers
         mediaType: type,
         sentAt: serverTimestamp(),
-        ttlPreset: selectedTtl, // Use selected TTL instead of hardcoded value
+        ttlPreset: selectedTtl,
         text: null,
         viewed: false,
       });
+      const messageId = messageRef.id;
+      console.log('[PreviewScreen] Message document created with media URL:', { messageId, downloadURL });
 
       console.log('[PreviewScreen] Message sent successfully with TTL:', selectedTtl);
       setIsUploading(false);
@@ -127,24 +128,22 @@ export default function PreviewScreen() {
     });
 
     try {
-      // 1. Upload the media file to Firebase Storage
+      // 1. Upload the media file to Firebase Storage FIRST
       console.log('[PreviewScreen] Starting media upload...');
       const response = await fetch(uri);
       const blob = await response.blob();
-      const storageRef = ref(
-        storage,
-        `media/${auth.currentUser.uid}/${Date.now()}`
-      );
+      const filename = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      const storageRef = ref(storage, `messages/${filename}`);
       await uploadBytes(storageRef, blob);
       const downloadURL = await getDownloadURL(storageRef);
-      console.log('[PreviewScreen] Media uploaded successfully', { downloadURL });
+      console.log('[PreviewScreen] Media uploaded successfully', { downloadURL, path: `messages/${filename}` });
 
-      // 2. Create a group message document
-      console.log('[PreviewScreen] Creating group message document...');
+      // 2. Create group message document with complete data (including mediaURL)
+      console.log('[PreviewScreen] Creating group message document with media URL...');
       const messageData = {
         senderId: auth.currentUser.uid,
         conversationId: conversationId,
-        mediaURL: downloadURL,
+        mediaURL: downloadURL, // ✅ Now has the actual URL when Firebase Function triggers
         mediaType: type,
         sentAt: serverTimestamp(),
         ttlPreset: selectedTtl,
@@ -159,14 +158,19 @@ export default function PreviewScreen() {
       };
 
       const messageRef = await addDoc(collection(firestore, 'messages'), messageData);
-      console.log('[PreviewScreen] Group message created successfully:', messageRef.id);
+      const messageId = messageRef.id;
+      console.log('[PreviewScreen] Group message created with media URL:', { messageId, downloadURL });
 
       // Note: Receipts are now created automatically by recipients when they load the message
       // This is handled by the useReceiptTracking hook to comply with new security rules
 
       console.log('[PreviewScreen] Group message sent successfully with TTL:', selectedTtl);
       setIsUploading(false);
-      router.replace("/(protected)/home");
+      // Navigate back to the group conversation instead of home
+      router.replace({
+        pathname: '/(protected)/group-conversation/[conversationId]',
+        params: { conversationId }
+      });
     } catch (error) {
       console.error("[PreviewScreen] Failed to send group media:", error);
       Alert.alert("Error", "Failed to send your message to the group. Please try again.");
@@ -297,5 +301,8 @@ const styles = StyleSheet.create({
   },
   fullVideo: {
     flex: 1,
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#000',
   },
 });

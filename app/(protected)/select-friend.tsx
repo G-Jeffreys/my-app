@@ -20,6 +20,7 @@ import {
   setDoc,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { updateDoc } from "firebase/firestore";
 import { firestore, auth, storage } from "../../lib/firebase";
 import { User } from "../../models/firestore/user";
 import { Conversation } from "../../models/firestore/conversation";
@@ -189,7 +190,7 @@ export default function SelectFriendScreen() {
     try {
       let downloadURL = null;
 
-      // Step 1: Upload media if this is a media message
+      // Step 1: Upload media if this is a media message FIRST
       if (isMediaMessage && uri) {
         console.log('[SelectFriendScreen] Uploading media file...');
         const response = await fetch(uri);
@@ -201,14 +202,8 @@ export default function SelectFriendScreen() {
         console.log('[SelectFriendScreen] Media upload completed:', { downloadURL });
       }
 
-      // Step 2: Create message document
-      console.log('[SelectFriendScreen] Creating message with TTL:', {
-        ttlToUse,
-        selectedTtl,
-        messageWillHaveTtl: ttlToUse,
-        messageType: isTextMessage ? 'text' : 'media'
-      });
-      
+      // Step 2: Create message document with complete data (including mediaURL)
+      console.log('[SelectFriendScreen] Creating message with complete data...');
       const messageData = {
         senderId: auth.currentUser.uid,
         sentAt: serverTimestamp(),
@@ -221,7 +216,7 @@ export default function SelectFriendScreen() {
           mediaType: "text" 
         } : { 
           text: null,
-          mediaURL: downloadURL,
+          mediaURL: downloadURL, // ✅ Now has the actual URL when Firebase Function triggers
           mediaType: type 
         }),
         
@@ -237,6 +232,18 @@ export default function SelectFriendScreen() {
       };
 
       const messageRef = await addDoc(collection(firestore, 'messages'), messageData);
+      const messageId = messageRef.id;
+      console.log('[SelectFriendScreen] Message document created with complete data:', { messageId, downloadURL });
+
+      // Step 4: Message processing complete
+      console.log('[SelectFriendScreen] Creating message with TTL:', {
+        ttlToUse,
+        selectedTtl,
+        messageWillHaveTtl: ttlToUse,
+        messageType: isTextMessage ? 'text' : 'media'
+      });
+      
+      // Message already created above
       console.log('[SelectFriendScreen] Message created successfully:', { 
         messageId: messageRef.id,
         messageType: isTextMessage ? 'text' : 'media',

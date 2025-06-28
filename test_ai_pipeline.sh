@@ -2,7 +2,7 @@
 echo "🧪 Testing AI Moderation Pipeline..."
 
 echo "1️⃣ Checking Cloud Run service health..."
-curl -s https://moderation-worker-435345795137.us-central1.run.app/health | jq '.'
+curl -s https://moderation-worker-yyaoaphbjq-uc.a.run.app/health | jq '.'
 
 echo -e "\n2️⃣ Checking current queue status..."
 gcloud tasks list --queue=moderate-summary-queue --location=us-central1

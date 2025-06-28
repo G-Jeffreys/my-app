@@ -1,4 +1,5 @@
 import {
+  Camera,
   CameraView,
   useCameraPermissions,
   useMicrophonePermissions,
@@ -26,6 +27,21 @@ export default function CameraScreen() {
   const [permissionStatus, setPermissionStatus] = useState<'checking' | 'granted' | 'denied' | 'requesting'>('checking');
   const [webStream, setWebStream] = useState<MediaStream | null>(null);
   const [isEmulator, setIsEmulator] = useState(false);
+  // Track whether the native camera should be in still-photo or video mode.
+  type CameraUIMode = 'photo' | 'video';
+  // `photo` is the default required for takePictureAsync(), while `video` is
+  // required by recordAsync() on Android. We toggle this state automatically
+  // right before a recording starts and after it ends.
+  const [cameraMode, setCameraMode] = useState<CameraUIMode>('photo');
+  
+  // Utility: switch capture mode with debounce
+  const switchCameraMode = async (mode: CameraUIMode): Promise<void> => {
+    if (cameraMode === mode) return;
+    setCameraMode(mode);
+    const settle = Platform.OS === 'android' ? 400 : 200;
+    console.log('[CameraScreen] switchCameraMode →', mode, 'waiting', settle, 'ms');
+    await new Promise(res => setTimeout(res, settle));
+  };
   
   // Refs for different camera types
   const cameraRef = useRef<CameraView>(null);
@@ -357,6 +373,9 @@ export default function CameraScreen() {
       setIsRecording(true);
       setRecordingTimeLeft(10);
       
+      // Ensure the camera is in video mode before starting the recording and wait for session to restart
+      await switchCameraMode('video');
+      
       // Configure recording options with better Android support
       const recordingOptions = {
         maxDuration: 10,
@@ -408,6 +427,9 @@ export default function CameraScreen() {
         throw new Error('Recording completed but no video URI received');
       }
       
+      // Switch back to photo mode so the next still capture works
+      await switchCameraMode('photo');
+      
     } catch (error) {
       console.error("[CameraScreen] Mobile recording failed:", error);
       
@@ -425,6 +447,9 @@ export default function CameraScreen() {
       }
       
       Alert.alert("Recording Error", errorMessage);
+      
+      // Ensure we return to photo mode even on error
+      await switchCameraMode('photo');
     } finally {
       // Always cleanup state
       setIsRecording(false);
@@ -443,6 +468,8 @@ export default function CameraScreen() {
     try {
       cameraRef.current.stopRecording();
       console.log('[CameraScreen] Stop recording called successfully');
+      // Flip back to photo mode for next still capture
+      switchCameraMode('photo');
     } catch (error) {
       console.error('[CameraScreen] Error stopping mobile recording:', error);
       // Don't show alert here as this is often called automatically
@@ -499,176 +526,382 @@ export default function CameraScreen() {
     if (Platform.OS === 'web' || !cameraRef.current) return;
     
     try {
-      const photo = await cameraRef.current.takePictureAsync();
-      console.log('[CameraScreen] Mobile photo taken:', photo?.uri);
-      if (photo) {
-        router.push({
-          pathname: "/(protected)/preview",
-          params: { 
-            uri: photo.uri, 
-            type: "image",
-            ...(conversationId && { conversationId })
-          },
-        });
-      }
-    } catch (e) {
-      console.error("[CameraScreen] Failed to take mobile photo:", e);
-      Alert.alert("Photo Error", "Failed to take photo. Please try again.");
-    }
-  };
+      console.log('[CameraScreen] Taking mobile photo...');
+      console.log('[CameraScreen] Camera state validation starting...');
+      
+      // ✅ Do NOT re-prompt for permission here (re-prompt tears down the camera & causes "hardware error")
+      //    Instead, just read the cached permission state so capture pipeline stays intact.
+      const { granted: cameraStillGranted, canAskAgain } = await Camera.getCameraPermissionsAsync();
+      console.log('[CameraScreen] Cached permission check just before capture:', {
+        cameraStillGranted,
+        canAskAgain,
+      });
 
-  // Unified recording handlers
-  const handleTakePhoto = async () => {
-    if (isRecording) {
-      console.log('[CameraScreen] Cannot take photo while recording');
-      return;
+      if (!cameraStillGranted) {
+        throw new Error('Camera permission revoked before capture');
+      }
+      
+      // Add slight delay to ensure camera is fully ready (longer on Android)
+      const readyDelay = Platform.OS === 'android' ? 300 : 100;
+      console.log('[CameraScreen] Waiting for camera ready delay (ms):', readyDelay);
+      await new Promise(resolve => setTimeout(resolve, readyDelay));
+      
+      console.log('[CameraScreen] Camera ready - attempting capture...');
+      
+      // Enhanced photo capture options with Android optimizations
+      const photoOptions = {
+        quality: 0.8,
+        base64: false,
+        exif: false,
+        skipProcessing: false,
+        // Android-specific optimizations
+        ...(Platform.OS === 'android' && {
+          // Disable some processing that can cause issues on certain Android devices
+          skipProcessing: true,
+        }),
+      };
+    
+    console.log('[CameraScreen] Photo options:', photoOptions);
+    
+    // Attempt photo capture with retry logic
+    let photo;
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount < maxRetries) {
+      try {
+        console.log(`[CameraScreen] Capture attempt ${retryCount + 1}/${maxRetries}`);
+        photo = await cameraRef.current.takePictureAsync(photoOptions);
+        
+        if (photo && photo.uri) {
+          console.log('[CameraScreen] Mobile photo captured successfully:', photo.uri);
+          break;
+        } else {
+          throw new Error('Photo captured but no URI returned');
+        }
+      } catch (captureError) {
+        retryCount++;
+        console.warn(`[CameraScreen] Capture attempt ${retryCount} failed:`, captureError);
+        
+        if (retryCount < maxRetries) {
+          // Progressive delay increase for retries
+          const retryDelay = 200 * retryCount;
+          console.log(`[CameraScreen] Retrying in ${retryDelay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+          
+          // Re-validate camera state before retry
+          if (!cameraRef.current) {
+            throw new Error('Camera reference lost during retry');
+          }
+        } else {
+          throw captureError;
+        }
+      }
     }
     
-    console.log('[CameraScreen] Taking photo');
+    if (photo && photo.uri) {
+      console.log('[CameraScreen] Successfully captured photo - navigating to preview');
+      console.log('[CameraScreen] Photo URI:', photo.uri);
+      console.log('[CameraScreen] Photo dimensions:', photo.width, 'x', photo.height);
+      
+      router.push({
+        pathname: "/(protected)/preview",
+        params: { 
+          uri: photo.uri, 
+          type: "image",
+          ...(conversationId && { conversationId })
+        },
+      });
+    } else {
+      throw new Error('Photo capture completed but no valid photo returned');
+    }
+  } catch (e) {
+    console.error("[CameraScreen] Failed to take mobile photo:", e);
     
-    if (Platform.OS === 'web') {
-      await takeWebPhoto();
-    } else {
-      await takeMobilePhoto();
+    // Enhanced error handling with specific messages
+    let errorMessage = "Failed to take photo. Please try again.";
+    let errorTitle = "Photo Error";
+    
+    if (e instanceof Error) {
+      console.log('[CameraScreen] Error type:', e.constructor.name);
+      console.log('[CameraScreen] Error message:', e.message);
+      
+      if (e.message.includes('not granted') || e.message.includes('permission')) {
+        errorMessage = "Camera permission was denied or lost. Please check your device settings and grant camera access.";
+        errorTitle = "Permission Error";
+      } else if (e.message.includes('busy') || e.message.includes('already')) {
+        errorMessage = "Camera is currently busy. Please wait a moment and try again.";
+        errorTitle = "Camera Busy";
+      } else if (e.message.includes('emulator') || e.message.includes('simulator')) {
+        errorMessage = "Photo capture may not work properly on emulators. Please try on a physical device.";
+        errorTitle = "Emulator Detected";
+      } else if (e.message.includes('reference lost') || e.message.includes('Camera reference')) {
+        errorMessage = "Camera lost connection. Please close and reopen the camera.";
+        errorTitle = "Camera Connection Lost";
+      } else if (e.message.includes('timeout') || e.message.includes('Timeout')) {
+        errorMessage = "Camera took too long to respond. Please try again.";
+        errorTitle = "Camera Timeout";
+      } else if (e.message.includes('Failed to capture image')) {
+        errorMessage = "Camera hardware error. Please restart the app and try again. If the problem persists, restart your device.";
+        errorTitle = "Hardware Error";
+      }
+    }
+    
+    // Add device info to help with debugging
+    console.error('[CameraScreen] Device info for debugging:', {
+      platform: Platform.OS,
+      brand: Platform.OS === 'android' ? (Platform.constants as any)?.Brand : 'N/A',
+      model: Platform.OS === 'android' ? (Platform.constants as any)?.Model : 'N/A',
+      manufacturer: Platform.OS === 'android' ? (Platform.constants as any)?.Manufacturer : 'N/A',
+      isEmulator: isEmulator,
+      permissionStatus: permissionStatus
+    });
+    
+    Alert.alert(errorTitle, errorMessage, [
+      {
+        text: "Try Again",
+        onPress: () => {
+          console.log('[CameraScreen] User chose to retry photo capture');
+          // Small delay before retry to let camera settle
+          setTimeout(() => takeMobilePhoto(), 500);
+        }
+      },
+      {
+        text: "Cancel",
+        style: "cancel",
+        onPress: () => {
+          console.log('[CameraScreen] User cancelled photo capture retry');
+        }
+      }
+    ]);
+  }
+};
+
+// Unified recording handlers
+const handleTakePhoto = async () => {
+  if (isRecording) {
+    console.log('[CameraScreen] Cannot take photo while recording');
+    return;
+  }
+  
+  console.log('[CameraScreen] Taking photo');
+  
+  if (Platform.OS === 'web') {
+    await takeWebPhoto();
+  } else {
+    await takeMobilePhoto();
+  }
+};
+
+const handlePhotoButtonLongPress = () => {
+  console.log('[CameraScreen] Photo button long pressed - attempting video recording');
+  if (Platform.OS === 'web') {
+    startWebRecording();
+  } else {
+    startMobileRecording();
+  }
+};
+
+// Cleanup effect
+useEffect(() => {
+  return () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+    if (webStream) {
+      webStream.getTracks().forEach(track => track.stop());
     }
   };
+}, [webStream]);
 
-  const handlePhotoButtonLongPress = () => {
-    console.log('[CameraScreen] Photo button long pressed - attempting video recording');
-    if (Platform.OS === 'web') {
-      startWebRecording();
-    } else {
-      startMobileRecording();
-    }
-  };
+console.log('[CameraScreen] Rendering with permission status:', permissionStatus);
+console.log('[CameraScreen] Is recording:', isRecording);
 
-  // Cleanup effect
-  useEffect(() => {
-    return () => {
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-      }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
-      }
-      if (webStream) {
-        webStream.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, [webStream]);
-
-  console.log('[CameraScreen] Rendering with permission status:', permissionStatus);
-  console.log('[CameraScreen] Is recording:', isRecording);
-
-  // Loading state
-  if (permissionStatus === 'checking') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <Header title="Camera" showHomeButton={true} />
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.statusText}>Checking camera permissions...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // Requesting permissions state
-  if (permissionStatus === 'requesting') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <Header title="Camera" showHomeButton={true} />
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.statusText}>Requesting camera access...</Text>
-          <Text style={styles.statusSubtext}>
-            {Platform.OS === 'web' 
-              ? "Please allow camera access in your browser"
-              : "Please grant camera and microphone permissions"
-            }
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // Permissions denied state
-  if (permissionStatus === 'denied') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <Header title="Camera" showHomeButton={true} />
-        <View style={styles.centered}>
-          <Text style={styles.permissionTitle}>Camera Access Required</Text>
-          <Text style={styles.permissionText}>
-            {Platform.OS === 'web'
-              ? "Please allow camera and microphone access in your browser to take photos and videos."
-              : "Camera and microphone permissions are required to take photos and videos."
-            }
-          </Text>
-          <TouchableOpacity style={styles.requestButton} onPress={handleRequestPermissions}>
-            <Text style={styles.requestButtonText}>Grant Permissions</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Text style={styles.backButtonText}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // Camera interface - Platform specific rendering
+// Loading state
+if (permissionStatus === 'checking') {
   return (
     <SafeAreaView style={styles.container}>
       <Header title="Camera" showHomeButton={true} />
-      {Platform.OS === 'web' ? (
-        // Web implementation with native HTML5 video
-        <View style={styles.camera}>
-          <video
-            ref={(ref) => { videoRef.current = ref; }}
-            autoPlay
-            playsInline
-            muted
-            style={styles.webVideo}
-            onLoadedMetadata={() => {
-              console.log('[CameraScreen] Video metadata loaded');
-            }}
-            onError={(error) => {
-              console.error('[CameraScreen] Video error:', error);
-            }}
-          />
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={styles.statusText}>Checking camera permissions...</Text>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+// Requesting permissions state
+if (permissionStatus === 'requesting') {
+  return (
+    <SafeAreaView style={styles.container}>
+      <Header title="Camera" showHomeButton={true} />
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={styles.statusText}>Requesting camera access...</Text>
+        <Text style={styles.statusSubtext}>
+          {Platform.OS === 'web' 
+            ? "Please allow camera access in your browser"
+            : "Please grant camera and microphone permissions"
+          }
+        </Text>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+// Permissions denied state
+if (permissionStatus === 'denied') {
+  return (
+    <SafeAreaView style={styles.container}>
+      <Header title="Camera" showHomeButton={true} />
+      <View style={styles.centered}>
+        <Text style={styles.permissionTitle}>Camera Access Required</Text>
+        <Text style={styles.permissionText}>
+          {Platform.OS === 'web'
+            ? "Please allow camera and microphone access in your browser to take photos and videos."
+            : "Camera and microphone permissions are required to take photos and videos."
+          }
+        </Text>
+        <TouchableOpacity style={styles.requestButton} onPress={handleRequestPermissions}>
+          <Text style={styles.requestButtonText}>Grant Permissions</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <Text style={styles.backButtonText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+// Camera interface - Platform specific rendering
+return (
+  <SafeAreaView style={styles.container}>
+    <Header title="Camera" showHomeButton={true} />
+    {Platform.OS === 'web' ? (
+      // Web implementation with native HTML5 video
+      <View style={styles.camera}>
+        <video
+          ref={(ref) => { videoRef.current = ref; }}
+          autoPlay
+          playsInline
+          muted
+          style={styles.webVideo}
+          onLoadedMetadata={() => {
+            console.log('[CameraScreen] Video metadata loaded');
+          }}
+          onError={(error) => {
+            console.error('[CameraScreen] Video error:', error);
+          }}
+        />
+        
+        {/* Hidden canvas for photo capture */}
+        <canvas
+          ref={(ref) => { canvasRef.current = ref; }}
+          style={{ display: 'none' }}
+        />
+        
+        {/* Web controls overlay */}
+        <View style={styles.webControlsBar}>
+          <TouchableOpacity style={styles.controlButton} onPress={toggleCameraFacing}>
+            <Text style={styles.controlText}>🔄 Flip</Text>
+          </TouchableOpacity>
           
-          {/* Hidden canvas for photo capture */}
-          <canvas
-            ref={(ref) => { canvasRef.current = ref; }}
-            style={{ display: 'none' }}
-          />
+          <TouchableOpacity 
+            style={styles.photoButton} 
+            onPress={handleTakePhoto}
+            onLongPress={handlePhotoButtonLongPress}
+            disabled={isRecording}
+          >
+            <Text style={styles.controlText}>📷 Photo</Text>
+          </TouchableOpacity>
           
-          {/* Web controls overlay */}
-          <View style={styles.webControlsBar}>
+          <TouchableOpacity
+            style={[
+              styles.recordButton,
+              isRecording && styles.recordButtonActive,
+            ]}
+            onPress={isRecording ? stopWebRecording : startWebRecording}
+          >
+            <Text style={styles.controlText}>
+              {isRecording ? `⏹️ Stop (${recordingTimeLeft}s)` : '🔴 Record'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+        
+        {isRecording && (
+          <View style={styles.recordingIndicator}>
+            <View style={styles.recordingDot} />
+            <Text style={styles.recordingText}>Recording... {recordingTimeLeft}s left</Text>
+          </View>
+        )}
+      </View>
+    ) : (
+      // Mobile implementation with expo-camera
+      <CameraView
+        ref={cameraRef}
+        style={styles.camera}
+        facing={facing}
+        videoQuality={"720p"}
+        mode={cameraMode as any}
+        enableTorch={false}
+        {...(Platform.OS === 'android' && {
+          ratio: "16:9",
+        })}
+      >
+        <View style={styles.cameraOverlay}>
+          {/* Emulator Warning */}
+          {isEmulator && (
+            <View style={styles.emulatorWarning}>
+              <Text style={styles.emulatorWarningText}>
+                ⚠️ Emulator Detected
+              </Text>
+              <Text style={styles.emulatorWarningSubtext}>
+                Video recording may not work properly on emulators. For best results, use a physical device.
+              </Text>
+            </View>
+          )}
+          
+          <View style={styles.topControls}>
             <TouchableOpacity style={styles.controlButton} onPress={toggleCameraFacing}>
               <Text style={styles.controlText}>🔄 Flip</Text>
             </TouchableOpacity>
-            
+          </View>
+          
+          <View style={styles.bottomControls}>
             <TouchableOpacity 
               style={styles.photoButton} 
               onPress={handleTakePhoto}
               onLongPress={handlePhotoButtonLongPress}
               disabled={isRecording}
             >
-              <Text style={styles.controlText}>📷 Photo</Text>
+              <Text style={styles.controlText}>📷</Text>
             </TouchableOpacity>
             
             <TouchableOpacity
               style={[
                 styles.recordButton,
                 isRecording && styles.recordButtonActive,
+                isEmulator && styles.recordButtonDisabled,
               ]}
-              onPress={isRecording ? stopWebRecording : startWebRecording}
+              onPress={isRecording ? stopMobileRecording : startMobileRecording}
+              disabled={isEmulator}
             >
-              <Text style={styles.controlText}>
-                {isRecording ? `⏹️ Stop (${recordingTimeLeft}s)` : '🔴 Record'}
-              </Text>
+              <View style={[
+                styles.recordButtonInner,
+                isRecording && styles.recordButtonInnerActive,
+              ]} />
+              {isRecording && (
+                <Text style={styles.recordingLabel}>Recording... {recordingTimeLeft}s</Text>
+              )}
+              {isEmulator && !isRecording && (
+                <Text style={styles.disabledLabel}>Emulator</Text>
+              )}
             </TouchableOpacity>
+            
+            <View style={styles.placeholder} />
           </View>
           
           {isRecording && (
@@ -678,83 +911,10 @@ export default function CameraScreen() {
             </View>
           )}
         </View>
-      ) : (
-        // Mobile implementation with expo-camera
-        <CameraView
-          ref={cameraRef}
-          style={styles.camera}
-          facing={facing}
-          videoQuality={"720p"}
-          mode="video"
-          enableTorch={false}
-          {...(Platform.OS === 'android' && {
-            ratio: "16:9",
-          })}
-        >
-          <View style={styles.cameraOverlay}>
-            {/* Emulator Warning */}
-            {isEmulator && (
-              <View style={styles.emulatorWarning}>
-                <Text style={styles.emulatorWarningText}>
-                  ⚠️ Emulator Detected
-                </Text>
-                <Text style={styles.emulatorWarningSubtext}>
-                  Video recording may not work properly on emulators. For best results, use a physical device.
-                </Text>
-              </View>
-            )}
-            
-            <View style={styles.topControls}>
-              <TouchableOpacity style={styles.controlButton} onPress={toggleCameraFacing}>
-                <Text style={styles.controlText}>🔄 Flip</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.bottomControls}>
-              <TouchableOpacity 
-                style={styles.photoButton} 
-                onPress={handleTakePhoto}
-                onLongPress={handlePhotoButtonLongPress}
-                disabled={isRecording}
-              >
-                <Text style={styles.controlText}>📷</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={[
-                  styles.recordButton,
-                  isRecording && styles.recordButtonActive,
-                  isEmulator && styles.recordButtonDisabled,
-                ]}
-                onPress={isRecording ? stopMobileRecording : startMobileRecording}
-                disabled={isEmulator}
-              >
-                <View style={[
-                  styles.recordButtonInner,
-                  isRecording && styles.recordButtonInnerActive,
-                ]} />
-                {isRecording && (
-                  <Text style={styles.recordingLabel}>Recording... {recordingTimeLeft}s</Text>
-                )}
-                {isEmulator && !isRecording && (
-                  <Text style={styles.disabledLabel}>Emulator</Text>
-                )}
-              </TouchableOpacity>
-              
-              <View style={styles.placeholder} />
-            </View>
-            
-            {isRecording && (
-              <View style={styles.recordingIndicator}>
-                <View style={styles.recordingDot} />
-                <Text style={styles.recordingText}>Recording... {recordingTimeLeft}s left</Text>
-              </View>
-            )}
-          </View>
-        </CameraView>
-      )}
-    </SafeAreaView>
-  );
+      </CameraView>
+    )}
+  </SafeAreaView>
+);
 }
 
 const styles = StyleSheet.create({

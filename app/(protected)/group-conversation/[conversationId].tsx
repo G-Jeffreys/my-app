@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Platform,
   TouchableOpacity,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
@@ -209,7 +210,11 @@ export default function GroupConversationScreen() {
         rightComponent={rightComponent}
       />
       
-      <View style={styles.content}>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.content}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+      >
         {/* Participants Info */}
         <View style={styles.participantsBar}>
           <Text style={styles.participantsText}>
@@ -231,6 +236,7 @@ export default function GroupConversationScreen() {
             style={styles.messagesList}
             contentContainerStyle={styles.messagesContent}
             showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
           />
         )}
 
@@ -239,7 +245,7 @@ export default function GroupConversationScreen() {
           conversationId={conversationId!}
           onMessageSent={handleMessageSent}
         />
-      </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

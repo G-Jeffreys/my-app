@@ -15,7 +15,7 @@ PINECONE_INDEX_NAME=snaps-prod
 # Cloud Tasks Configuration (already set)
 TASK_QUEUE_LOCATION=us-central1
 MODERATION_TASK_QUEUE_NAME=moderate-summary-queue
-MODERATION_WORKER_URL=https://moderation-worker-435345795137.us-central1.run.app
+MODERATION_WORKER_URL=https://moderation-worker-yyaoaphbjq-uc.a.run.app
 ```
 
 ## 🎯 Setup Steps

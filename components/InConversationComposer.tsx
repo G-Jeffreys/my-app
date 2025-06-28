@@ -7,8 +7,10 @@ import {
   StyleSheet,
   Alert,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { 
   collection, 
   addDoc, 
@@ -34,6 +36,7 @@ const InConversationComposer: React.FC<InConversationComposerProps> = ({
 }) => {
   const { user } = useAuth();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [ttl, setTtl] = useState<TtlPreset>(DEFAULT_TTL_PRESET);
   const [isLoading, setIsLoading] = useState(false);
@@ -119,11 +122,11 @@ const InConversationComposer: React.FC<InConversationComposerProps> = ({
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingBottom: Math.max(12, insets.bottom) }]}>
       {/* TTL Selector */}
       <View style={styles.ttlContainer}>
         <Text style={styles.ttlLabel}>Message expires in:</Text>
-        <TtlSelector selectedTtl={ttl} onTtlChange={setTtl} />
+        <TtlSelector selectedTtl={ttl} onTtlChange={setTtl} compact={true} />
       </View>
 
       {/* Text Input */}

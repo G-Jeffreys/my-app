@@ -32,11 +32,17 @@ export default function PlatformVideo({
   console.log('[PlatformVideo] Should play:', shouldPlay);
   console.log('[PlatformVideo] Is looping:', isLooping);
 
-  // Create video player using the hook
+  // Create video player using the hook with error handling
   const player = useVideoPlayer(source, (player) => {
-    player.loop = isLooping;
-    if (shouldPlay) {
-      player.play();
+    console.log('[PlatformVideo] Player callback called');
+    try {
+      player.loop = isLooping;
+      if (shouldPlay) {
+        console.log('[PlatformVideo] Starting playback');
+        player.play();
+      }
+    } catch (error) {
+      console.error('[PlatformVideo] Error in player callback:', error);
     }
   });
 
@@ -71,12 +77,25 @@ export default function PlatformVideo({
 
   // On native, use expo-video VideoView component
   console.log('[PlatformVideo] Using expo-video VideoView for native platform');
+  
+  // Ensure we have minimum required styles for video display
+  const videoStyle = {
+    minHeight: 200,
+    minWidth: 200,
+    backgroundColor: '#000',
+    ...style,
+  };
+  
+  console.log('[PlatformVideo] Final video style:', videoStyle);
+  
   return (
     <VideoView
       player={player}
-      style={style}
+      style={videoStyle}
       contentFit={contentFit}
       nativeControls={nativeControls}
+      allowsFullscreen={true}
+      allowsPictureInPicture={false}
     />
   );
 } 

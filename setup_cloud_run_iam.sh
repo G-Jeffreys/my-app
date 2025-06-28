@@ -73,7 +73,7 @@ echo "🧪 Testing service health with new permissions..."
 sleep 5  # Wait for service to restart
 
 # Test the health endpoint
-curl -s https://moderation-worker-435345795137.us-central1.run.app/health | jq '.'
+curl -s https://moderation-worker-yyaoaphbjq-uc.a.run.app/health | jq '.'
 
 echo ""
 echo "📋 Verification complete!"

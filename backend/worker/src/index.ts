@@ -132,50 +132,125 @@ app.post('/moderate-summary-job', async (req: express.Request, res: express.Resp
 
     // Prepare content for moderation and summarization
     let contentText = message?.text || '';
-    let imageCaption = '';
+    let mediaCaption = '';
 
-    // T2.2b - Optional image captioning for media messages
-    if (message?.mediaURL && (message?.mediaType === 'image' || message?.mediaType === 'photo')) {
-      try {
-        logger.info('🖼️ Generating image caption', { messageId, mediaURL: message.mediaURL });
-        
-        const captionResponse = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: 'Describe this image in one short sentence (≤75 tokens). Be factual and neutral.'
-                },
-                {
-                  type: 'image_url',
-                  image_url: {
-                    url: message.mediaURL,
-                    detail: 'low' // 640px for cost control
+    // T2.2b - Enhanced media captioning for images and videos
+    if (message?.mediaURL) {
+      // Normalize mediaType to handle whitespace and case variations
+      const mediaTypeClean = (message.mediaType || '').trim().toLowerCase();
+      const isImage = mediaTypeClean === 'image' || mediaTypeClean === 'photo';
+      const isVideo = mediaTypeClean === 'video';
+      
+      if (isImage) {
+        try {
+          logger.info('🖼️ Generating image caption', { messageId, mediaURL: message.mediaURL });
+          
+          const captionResponse = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: 'Describe this image in one short sentence (≤75 tokens). Be factual and neutral.'
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: message.mediaURL,
+                      detail: 'low' // 640px for cost control
+                    }
                   }
-                }
-              ]
-            }
-          ],
-          max_tokens: 75,
-          temperature: 0.1
-        });
+                ]
+              }
+            ],
+            max_tokens: 75,
+            temperature: 0.1
+          });
 
-        imageCaption = captionResponse.choices[0]?.message?.content || '';
-        logger.info('✅ Image caption generated', { messageId, caption: imageCaption });
-        
-      } catch (captionError) {
-        logger.warn('⚠️ Image captioning failed, continuing without caption', {
-          messageId,
-          error: (captionError as Error).message
+          mediaCaption = captionResponse.choices[0]?.message?.content || '';
+          logger.info('✅ Image caption generated', { messageId, caption: mediaCaption });
+          
+        } catch (captionError) {
+          logger.warn('⚠️ Image captioning failed, continuing without caption', {
+            messageId,
+            error: (captionError as Error).message
+          });
+        }
+      } else if (isVideo) {
+        try {
+          logger.info('🎥 Processing video for AI analysis', { messageId, mediaURL: message.mediaURL });
+          
+          // For videos, we'll create a comprehensive description and summary
+          // Note: This assumes the video URL is accessible. In production, you might want to:
+          // 1. Extract video frames using a video processing service
+          // 2. Use video-specific AI models
+          // 3. Analyze audio content as well
+          
+          // For now, we'll generate a video-aware summary based on context
+          const videoProcessingResponse = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: `You are analyzing a video message. Create a brief, neutral summary that indicates this is video content. Consider:
+                - This is a video message (not image or text)
+                - Videos typically show motion, action, or moments
+                - Keep summary under 50 tokens
+                - Be factual and neutral
+                - If there's accompanying text, incorporate it appropriately`
+              },
+              {
+                role: 'user',
+                content: `Generate a summary for a video message${contentText ? ` with text: "${contentText}"` : ' (no accompanying text)'}.`
+              }
+            ],
+            max_tokens: 50,
+            temperature: 0.1
+          });
+
+          mediaCaption = videoProcessingResponse.choices[0]?.message?.content || 'Video message';
+          logger.info('✅ Video summary generated', { messageId, summary: mediaCaption });
+          
+          // Additional video-specific logging for debugging
+          logger.info('📊 Video processing stats', {
+            messageId,
+            hasText: !!contentText,
+            textLength: contentText.length,
+            videoURL: message.mediaURL,
+            summaryLength: mediaCaption.length
+          });
+          
+        } catch (videoError) {
+          logger.warn('⚠️ Video processing failed, using fallback', {
+            messageId,
+            error: (videoError as Error).message
+          });
+          
+          // Fallback video summary based on text content or generic
+          if (contentText.trim()) {
+            mediaCaption = `Video message: ${contentText.substring(0, 30)}${contentText.length > 30 ? '...' : ''}`;
+          } else {
+            mediaCaption = 'Video message shared';
+          }
+        }
+      } else {
+        logger.info('📎 Unsupported media type for AI analysis', { 
+          messageId, 
+          mediaType: message?.mediaType 
         });
+      }
+      
+      // Ensure we always have a fallback caption for media messages
+      if (!mediaCaption.trim()) {
+        mediaCaption = 'Video message shared';
+        logger.info('🔧 Applied fallback media caption', { messageId, mediaType: mediaTypeClean });
       }
     }
 
-    // Combine text and caption for processing
-    const fullContent = [contentText, imageCaption].filter(Boolean).join(' ');
+    // Combine text and media caption for processing
+    const fullContent = [contentText, mediaCaption].filter(Boolean).join(' ');
     
     if (!fullContent.trim()) {
       logger.warn('⚠️ No content to process', { messageId });

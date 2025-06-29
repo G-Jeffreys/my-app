@@ -1,7 +1,7 @@
 {
-  "name": "ai-moderation-worker",
+  "name": "snapconnect-ai-worker",
   "version": "1.0.0",
-  "description": "Cloud Run service for AI moderation and summarization pipeline",
+  "description": "Cloud Run service for AI moderation and summarization pipeline - SnapConnect",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

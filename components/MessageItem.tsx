@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native";
 import { VideoContentFit } from "expo-video";
 import { useAuth } from "../store/useAuth";
@@ -7,6 +7,7 @@ import { useReceiptTracking } from "../hooks/useReceiptTracking";
 import { Message, FirestoreTimestamp } from "../models/firestore/message";
 import PlatformVideo from "./PlatformVideo";
 import SummaryLine from "./SummaryLine";
+import FullScreenImageViewer from "./FullScreenImageViewer";
 
 interface MessageItemProps {
   message: Message;
@@ -45,6 +46,8 @@ const formatTime = (seconds: number): string => {
 const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
   const user = useAuth((state) => state.user);
   const [isOpened, setIsOpened] = useState(false);
+  const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
+  const [isFullScreenVisible, setIsFullScreenVisible] = useState(false);
   const videoRef = useRef<any>(null);
 
   // Use receipt tracking for proper receivedAt timestamp (for recipients only)
@@ -55,15 +58,17 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
 
   const isSender = message.senderId === user?.uid;
 
-  // Determine the start time for TTL countdown
-  const ttlStartTime = isSender ? (
-    // For senders, use sentAt timestamp (they sent the message)
-    message.sentAt instanceof Date ? message.sentAt : 
-    new Date((message.sentAt as any).seconds * 1000)
-  ) : (
-    // For recipients, use receivedAt timestamp (when they received it)
-    receivedAt
-  );
+  // Memoize TTL start time calculation to prevent unnecessary recalculations
+  const ttlStartTime = useMemo(() => {
+    if (isSender) {
+      // For senders, use sentAt timestamp (they sent the message)
+      return message.sentAt instanceof Date ? message.sentAt : 
+        new Date((message.sentAt as any).seconds * 1000);
+    } else {
+      // For recipients, use receivedAt timestamp (when they received it)
+      return receivedAt;
+    }
+  }, [isSender, message.sentAt, receivedAt]);
 
   // Use appropriate timestamp for TTL countdown
   const { remaining, isExpired } = useCountdown(ttlStartTime, message.ttlPreset);
@@ -74,7 +79,8 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
   // Message is considered expired if either client-side countdown expired OR database marked it as expired
   const messageExpired = isExpired || isExpiredInDB;
 
-  logMessage('Component rendered', {
+  // Memoize the log data to prevent object recreation on every render
+  const logData = useMemo(() => ({
     messageId: message.id,
     isSender,
     hasReceiptTracking: !!receipt,
@@ -86,15 +92,22 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
     isExpiredInDB,
     messageExpired,
     receiptLoading
-  });
+  }), [message.id, isSender, receipt, receivedAt, message.sentAt, ttlStartTime, remaining, isExpired, isExpiredInDB, messageExpired, receiptLoading]);
 
-  // Handle marking message as viewed when opened
-  useEffect(() => {
+  logMessage('Component rendered', logData);
+
+  // Memoize the markAsViewed callback to prevent recreation
+  const handleMarkAsViewed = useCallback(() => {
     if (isOpened && !isSender && receipt && !receipt.viewedAt && !messageExpired) {
       logMessage('Marking message as viewed', { messageId: message.id });
       markAsViewed();
     }
   }, [isOpened, isSender, receipt, markAsViewed, message.id, messageExpired]);
+
+  // Handle marking message as viewed when opened
+  useEffect(() => {
+    handleMarkAsViewed();
+  }, [handleMarkAsViewed]);
 
   // Handle automatic closure when message expires while open
   useEffect(() => {
@@ -115,7 +128,7 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
     }
   }, [messageExpired, isOpened, isSender, message.id, remaining, message.ttlPreset]);
 
-  // Hide expired messages immediately for better UX (server cleanup runs hourly)
+  // Log message expiration status once per change - prevent excessive logging
   useEffect(() => {
     if (messageExpired && !isSender) {
       logMessage('Message expired - showing summary only', { 
@@ -126,7 +139,7 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
         isExpiredInDB
       });
     }
-  }, [messageExpired, isSender, message.id, remaining, message.ttlPreset, receivedAt, isExpiredInDB]);
+  }, [messageExpired, message.id]); // Only depend on messageExpired and messageId
 
   const handlePress = () => {
     if (!messageExpired || isSender) {
@@ -145,6 +158,33 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
     }
   };
 
+  const handleSummaryPress = () => {
+    console.log(`[MessageItem] ${isSummaryExpanded ? 'Collapsing' : 'Expanding'} summary for expired message:`, message.id);
+    console.log('[MessageItem] Summary expansion state change:', { 
+      messageId: message.id, 
+      previousState: isSummaryExpanded, 
+      newState: !isSummaryExpanded,
+      willUseExpandedContainer: !isSummaryExpanded  // New state will trigger expanded container
+    });
+    setIsSummaryExpanded(!isSummaryExpanded);
+  };
+
+  const handleImagePress = useCallback(() => {
+    if ((message.mediaType === "image" || message.mediaType === 'photo') && message.mediaURL && !messageExpired) {
+      logMessage('Opening full-screen image viewer', { 
+        messageId: message.id, 
+        mediaURL: message.mediaURL,
+        isExpired: messageExpired 
+      });
+      setIsFullScreenVisible(true);
+    }
+  }, [message.mediaType, message.mediaURL, message.id, messageExpired]);
+
+  const handleCloseFullScreen = useCallback(() => {
+    logMessage('Closing full-screen image viewer', { messageId: message.id });
+    setIsFullScreenVisible(false);
+  }, [message.id]);
+
   // For recipients, hide completely if expired and no summary exists
   if (messageExpired && !isSender && !message.hasSummary) {
     return null;
@@ -152,16 +192,31 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
 
   // Show expired message with summary for recipients
   if (messageExpired && !isSender && message.hasSummary) {
+    // Log container expansion state
+    console.log('[MessageItem] Rendering expired message with summary expansion:', {
+      messageId: message.id,
+      isSummaryExpanded,
+      willApplyExpandedContainer: isSummaryExpanded,
+      willApplyExpandedContent: isSummaryExpanded
+    });
+    
     return (
       <TouchableOpacity
         style={[
           styles.messageContainer,
           styles.expiredMessage,
+          // Use more screen width for expanded summaries to prevent text cutoff
+          isSummaryExpanded && styles.messageContainerExpanded,
           { marginBottom: 10 }
         ]}
-        disabled={true} // No interaction for expired messages
+        onPress={handleSummaryPress} // Enable tapping to expand/collapse summary
+        activeOpacity={0.7}
       >
-        <View style={styles.messageContent}>
+        <View style={[
+          styles.messageContent,
+          // Apply expanded styling when summary is expanded
+          isSummaryExpanded && styles.messageContentExpanded
+        ]}>
           {/* Expired message indicator */}
           <View style={styles.expiredIndicator}>
             <Text style={styles.expiredIndicatorText}>🔒 Message Expired</Text>
@@ -170,8 +225,27 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
             </Text>
           </View>
           
-          {/* Show AI summary if available */}
-          <SummaryLine messageId={message.id} />
+          {/* Expandable AI summary */}
+          <View style={styles.summarySection}>
+            <View style={styles.summaryHeader}>
+              <Text style={styles.summaryHeaderText}>
+                🤖 AI Summary
+              </Text>
+              <Text style={styles.expandIndicator}>
+                {isSummaryExpanded ? '▼ Tap to collapse' : '▶ Tap to expand'}
+              </Text>
+            </View>
+            
+            <View style={[
+              styles.summaryContent,
+              isSummaryExpanded && styles.summaryContentExpanded
+            ]}>
+                             <SummaryLine 
+                 messageId={message.id}
+                 isExpanded={isSummaryExpanded}
+               />
+            </View>
+          </View>
           
           {/* Show when it expired */}
           {message.expiredAt && (
@@ -220,16 +294,23 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
       {isOpened ? (
         <>
           {/* Render content based on media type */}
-          {message.mediaType === "image" || message.mediaType === 'photo' ? (
-            <Image source={{ uri: message.mediaURL || "" }} style={styles.media} />
-          ) : message.mediaType === 'video' ? (
-                          <PlatformVideo
-                source={{ uri: message.mediaURL || "" }}
-                style={styles.media}
-                contentFit="cover"
-                shouldPlay
-                isLooping
+          {(message.mediaType === "image" || message.mediaType === 'photo') && message.mediaURL ? (
+            <TouchableOpacity onPress={handleImagePress} activeOpacity={0.9}>
+              <Image 
+                source={{ uri: message.mediaURL }} 
+                style={styles.media} 
+                resizeMode="contain"
+                onError={(e) => console.log('[MessageItem] Image load error:', e.nativeEvent.error)}
               />
+            </TouchableOpacity>
+          ) : message.mediaType === 'video' && message.mediaURL ? (
+            <PlatformVideo
+              source={{ uri: message.mediaURL }}
+              style={styles.media}
+              contentFit="cover"
+              shouldPlay
+              isLooping
+            />
           ) : null}
           
           {/* Render text content */}
@@ -239,18 +320,37 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
             </View>
           )}
           
-          {/* TTL Countdown */}
-          <View style={[
-            styles.countdown,
-            messageExpired && styles.countdownExpired
-          ]}>
-            <Text style={[
-              styles.countdownText,
-              messageExpired && styles.countdownTextExpired
+          {/* TTL Countdown - positioned outside text area to not obscure content */}
+          {!message.text && (
+            <View style={[
+              styles.countdown,
+              messageExpired && styles.countdownExpired
             ]}>
-              {messageExpired ? 'EXPIRED' : formatTime(remaining)}
-            </Text>
-          </View>
+              <Text style={[
+                styles.countdownText,
+                messageExpired && styles.countdownTextExpired
+              ]}>
+                {messageExpired ? 'EXPIRED' : formatTime(remaining)}
+              </Text>
+            </View>
+          )}
+          
+          {/* TTL countdown for text messages - positioned below content */}
+          {message.text && (
+            <View style={styles.countdownColumn}>
+              <View style={[
+                styles.countdownBottomRight,
+                messageExpired && styles.countdownExpired
+              ]}>
+                <Text style={[
+                  styles.countdownText,
+                  messageExpired && styles.countdownTextExpired
+                ]}>
+                  {messageExpired ? 'EXPIRED' : formatTime(remaining)}
+                </Text>
+              </View>
+            </View>
+          )}
         </>
       ) : (
         <>
@@ -272,6 +372,17 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
           </View>
         </>
       )}
+      
+      {/* Full-screen image viewer */}
+      <FullScreenImageViewer
+        visible={isFullScreenVisible}
+        imageUri={message.mediaURL || ''}
+        onClose={handleCloseFullScreen}
+        isExpired={messageExpired}
+        remaining={remaining}
+        showTTL={true}
+        messageId={message.id}
+      />
     </TouchableOpacity>
   );
 };
@@ -318,9 +429,12 @@ const styles = StyleSheet.create({
   },
   media: {
     width: "100%",
-    height: 400,
+    minHeight: 200,
+    maxHeight: 400,
+    aspectRatio: 1,
     borderRadius: 10,
     marginBottom: 8,
+    backgroundColor: '#f0f0f0', // Show loading background
   },
   timer: {
     position: "absolute",
@@ -354,10 +468,17 @@ const styles = StyleSheet.create({
     alignSelf: "flex-end",
     marginRight: 16,
     marginVertical: 4,
-    maxWidth: "80%",
+    maxWidth: "85%",
+  },
+  messageContainerExpanded: {
+    maxWidth: "100%",
+    marginRight: 2,
   },
   messageContent: {
     padding: 8,
+  },
+  messageContentExpanded: {
+    padding: 2,
   },
   expiredIndicator: {
     padding: 8,
@@ -391,17 +512,66 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     opacity: 0.8,
   },
+  summarySection: {
+    marginVertical: 8,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#e3f2fd',
+  },
+  summaryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  summaryHeaderText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1976d2',
+    flex: 1, // Let header text expand
+  },
+  expandIndicator: {
+    fontSize: 9,
+    color: '#666',
+    fontStyle: 'italic',
+    maxWidth: '30%',
+  },
+  summaryContent: {
+    // Normal collapsed state - limit height and enable scrolling if needed
+    maxHeight: 60, // About 3 lines of text
+    width: '100%', // Ensure full width is used for text wrapping
+  },
+  summaryContentExpanded: {
+    // Expanded state - allow much more height with scrolling
+    maxHeight: 200, // Allow much more vertical space
+    minHeight: 60,  // Ensure minimum height for readability
+    width: '100%',  // Ensure full width is used for text wrapping
+  },
   countdown: {
     position: "absolute",
+    backgroundColor: "rgba(0,0,0,0.7)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
     top: 15,
     right: 15,
+  },
+  countdownColumn: {
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    marginTop: 8,
+    gap: 4,
+  },
+  countdownBottomRight: {
     backgroundColor: "rgba(0,0,0,0.7)",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
   },
   countdownExpired: {
-    backgroundColor: "rgba(255, 107, 107, 0.9)", // Red background for expired
+    backgroundColor: "rgba(255, 107, 107, 0.9)",
   },
   countdownText: {
     color: "white",
@@ -410,7 +580,7 @@ const styles = StyleSheet.create({
   },
   countdownTextExpired: {
     color: "white",
-    fontSize: 12, // Slightly smaller for "EXPIRED" text
+    fontSize: 12,
   },
 });
 

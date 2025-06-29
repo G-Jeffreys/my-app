@@ -43,7 +43,7 @@ export default function Landing() {
   console.log('[Landing] Showing landing page - user can interact');
   return (
     <View className="flex-1 items-center justify-center bg-white">
-      <Text className="text-3xl font-bold mb-4">My App</Text>
+      <Text className="text-3xl font-bold mb-4">SnapConnect</Text>
       <Link href="/(auth)/login" asChild>
         <TouchableOpacity className="bg-blue-500 px-6 py-3 rounded-lg">
           <Text className="text-white font-bold text-lg">Get Started</Text>

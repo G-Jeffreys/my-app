@@ -61,25 +61,31 @@ export default function CameraScreen() {
   // Detect if running on emulator (Android)
   useEffect(() => {
     if (Platform.OS === 'android') {
-      // Common emulator detection methods
-      const isEmulatorLikely = 
-        // Check for common emulator characteristics
-        Platform.constants.Brand?.toLowerCase().includes('generic') ||
-        Platform.constants.Model?.toLowerCase().includes('emulator') ||
-        Platform.constants.Model?.toLowerCase().includes('sdk') ||
-        // Additional checks
-        Platform.constants.Manufacturer?.toLowerCase() === 'google' && 
-        Platform.constants.Model?.toLowerCase().includes('sdk');
+              // Enhanced emulator detection methods
+        const isEmulatorLikely = 
+          // Check for common emulator characteristics
+          Platform.constants.Brand?.toLowerCase().includes('generic') ||
+          Platform.constants.Model?.toLowerCase().includes('emulator') ||
+          Platform.constants.Model?.toLowerCase().includes('sdk') ||
+          Platform.constants.Model?.toLowerCase().includes('android sdk') ||
+          // Additional checks
+          (Platform.constants.Manufacturer?.toLowerCase() === 'google' && 
+           Platform.constants.Model?.toLowerCase().includes('sdk')) ||
+          // Check for common AVD patterns
+          (Platform.constants.Model?.toLowerCase().includes('pixel') && 
+           Platform.constants.Brand?.toLowerCase() === 'google' &&
+           Platform.constants.Manufacturer?.toLowerCase() === 'google');
       
-      console.log('[CameraScreen] Emulator detection - Brand:', Platform.constants.Brand);
-      console.log('[CameraScreen] Emulator detection - Model:', Platform.constants.Model);
-      console.log('[CameraScreen] Emulator detection - Manufacturer:', Platform.constants.Manufacturer);
-      console.log('[CameraScreen] Is likely emulator:', isEmulatorLikely);
+              console.log('[CameraScreen] Emulator detection - Brand:', Platform.constants.Brand);
+        console.log('[CameraScreen] Emulator detection - Model:', Platform.constants.Model);
+        console.log('[CameraScreen] Emulator detection - Manufacturer:', Platform.constants.Manufacturer);
+        console.log('[CameraScreen] Is likely emulator:', isEmulatorLikely);
       
       setIsEmulator(isEmulatorLikely);
       
       if (isEmulatorLikely) {
-        console.warn('[CameraScreen] Running on Android emulator - video recording may not work properly');
+        console.warn('[CameraScreen] Running on Android emulator - camera functionality may be limited');
+        console.warn('[CameraScreen] Physical device recommended for reliable camera operation');
       }
     }
   }, []);
@@ -525,6 +531,11 @@ export default function CameraScreen() {
   const takeMobilePhoto = async () => {
     if (Platform.OS === 'web' || !cameraRef.current) return;
     
+    // Warn about emulator limitations but still allow the attempt
+    if (isEmulator) {
+      console.warn('[CameraScreen] Attempting photo capture on emulator - may result in black screen');
+    }
+    
     try {
       console.log('[CameraScreen] Taking mobile photo...');
       console.log('[CameraScreen] Camera state validation starting...');
@@ -632,9 +643,9 @@ export default function CameraScreen() {
       } else if (e.message.includes('busy') || e.message.includes('already')) {
         errorMessage = "Camera is currently busy. Please wait a moment and try again.";
         errorTitle = "Camera Busy";
-      } else if (e.message.includes('emulator') || e.message.includes('simulator')) {
-        errorMessage = "Photo capture may not work properly on emulators. Please try on a physical device.";
-        errorTitle = "Emulator Detected";
+      } else if (e.message.includes('emulator') || e.message.includes('simulator') || isEmulator) {
+        errorMessage = "Camera shows black screen with yellow timestamp on emulators. This is a known limitation. Try: 1) Use a physical device, 2) Enable camera support in AVD settings, or 3) Use the web version for testing.";
+        errorTitle = "Emulator Camera Limitation";
       } else if (e.message.includes('reference lost') || e.message.includes('Camera reference')) {
         errorMessage = "Camera lost connection. Please close and reopen the camera.";
         errorTitle = "Camera Connection Lost";
@@ -859,7 +870,9 @@ return (
                 ⚠️ Emulator Detected
               </Text>
               <Text style={styles.emulatorWarningSubtext}>
-                Video recording may not work properly on emulators. For best results, use a physical device.
+                Camera may show black screen with yellow timestamp on emulators. 
+                For best results, use a physical device. If you need to test, 
+                try enabling "Camera support" in AVD settings or use the web version.
               </Text>
             </View>
           )}

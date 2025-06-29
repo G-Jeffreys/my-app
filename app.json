@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "my-app",
-    "slug": "my-app",
-    "scheme": "my-app",
+    "name": "SnapConnect",
+    "slug": "snapconnect",
+    "scheme": "snapconnect",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.gjeffreys.myapp",
+      "bundleIdentifier": "com.gjeffreys.snapconnect",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -29,7 +29,7 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.gjeffreys.myapp",
+      "package": "com.gjeffreys.snapconnect",
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.CAMERA",

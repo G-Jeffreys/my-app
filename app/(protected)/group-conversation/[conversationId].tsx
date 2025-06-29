@@ -270,20 +270,6 @@ export default function GroupConversationScreen() {
           totalMessages={totalMessageCount}
         />
 
-        {/* DEBUG: RAG Status Information */}
-        {__DEV__ && conversation && (
-          <View style={styles.debugContainer}>
-            <Text style={styles.debugTitle}>🔍 RAG Debug Info:</Text>
-            <Text style={styles.debugText}>RAG Enabled: {conversation.ragEnabled ? '✅ Yes' : '❌ No'}</Text>
-            <Text style={styles.debugText}>Message Count: {conversation.messageCount || 0}</Text>
-            <Text style={styles.debugText}>Last Processed: {conversation.lastProcessedMessageCount || 0}</Text>
-            <Text style={styles.debugText}>Total Messages: {totalMessageCount}</Text>
-            <Text style={styles.debugText}>Processed Count (State): {processedMessageCount}</Text>
-            <Text style={styles.debugText}>Messages Since Last Summary: {(conversation.messageCount || 0) - (conversation.lastProcessedMessageCount || 0)}</Text>
-            <Text style={styles.debugText}>Should Show Demarcation: {processedMessageCount > 0 && processedMessageCount < totalMessageCount ? '✅ Yes' : '❌ No'}</Text>
-          </View>
-        )}
-
         {loading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#007AFF" />
@@ -298,6 +284,12 @@ export default function GroupConversationScreen() {
             contentContainerStyle={styles.messagesContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            removeClippedSubviews={true}
+            windowSize={21}
+            maxToRenderPerBatch={10}
+            updateCellsBatchingPeriod={50}
+            initialNumToRender={15}
+            extraData={`${messages.length}-${processedMessageCount}`}
           />
         )}
 
@@ -394,22 +386,5 @@ const styles = StyleSheet.create({
   },
   keyboardAvoidingView: {
     flex: 1,
-  },
-  debugContainer: {
-    padding: 16,
-    backgroundColor: '#f5f5f5',
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-  },
-  debugTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  debugText: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
   },
 }); 

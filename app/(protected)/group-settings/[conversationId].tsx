@@ -9,6 +9,7 @@ import {
   TextInput,
   FlatList,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
@@ -44,6 +45,7 @@ export default function GroupSettingsScreen() {
   const [updating, setUpdating] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [editingName, setEditingName] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   console.log('[GroupSettings] Rendering for conversation:', conversationId);
 
@@ -362,7 +364,7 @@ export default function GroupSettingsScreen() {
     <SafeAreaView style={styles.container}>
       <Header title="Group Settings" showBackButton />
       
-      <View style={styles.content}>
+      <ScrollView style={styles.content}>
         {/* Group Name Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Group Name</Text>
@@ -451,32 +453,19 @@ export default function GroupSettingsScreen() {
 
         <Text style={styles.sectionTitle}>Group Actions</Text>
         
-        {/* RAG Controls */}
-        {__DEV__ && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>🧠 RAG Controls (Debug)</Text>
-            <View style={styles.ragControlsContainer}>
-              <Text style={styles.ragStatusText}>
-                RAG Status: {conversation?.ragEnabled ? '✅ Enabled' : '❌ Disabled'}
-              </Text>
-              {!conversation?.ragEnabled && (
-                <TouchableOpacity 
-                  style={styles.enableRagButton}
-                  onPress={handleEnableRAG}
-                >
-                  <Text style={styles.enableRagButtonText}>Enable RAG</Text>
-                </TouchableOpacity>
-              )}
-              <Text style={styles.ragInfoText}>
-                Message Count: {conversation?.messageCount || 0}
-              </Text>
-              <Text style={styles.ragInfoText}>
-                Last Processed: {conversation?.lastProcessedMessageCount || 0}
-              </Text>
-            </View>
-          </View>
-        )}
-      </View>
+        {/* Leave Group Action */}
+        <View style={styles.section}>
+          <TouchableOpacity 
+            style={[styles.actionButton, styles.leaveButton]}
+            onPress={handleLeaveGroup}
+            disabled={updating}
+          >
+            <Text style={styles.leaveButtonText}>
+              {updating ? 'Processing...' : 'Leave Group'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -668,5 +657,20 @@ const styles = StyleSheet.create({
   ragInfoText: {
     fontSize: 12,
     color: '#666',
+  },
+  deleteButton: {
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: '#f44336',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  deleteButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  buttonDisabled: {
+    backgroundColor: '#ccc',
   },
 }); 

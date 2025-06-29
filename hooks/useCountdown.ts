@@ -1,8 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 
-// Console log function for debugging TTL behavior
+// Throttled logging to prevent performance issues
+const logCache = new Map<string, number>();
+const LOG_THROTTLE_MS = 5000; // Only log same message once per 5 seconds for TTL
+
 const logTTL = (message: string, data?: any) => {
-  console.log(`[TTL-Debug] ${message}`, data ? data : '');
+  const key = `${message}${data ? JSON.stringify(data) : ''}`;
+  const now = Date.now();
+  const lastLog = logCache.get(key) || 0;
+  
+  if (now - lastLog > LOG_THROTTLE_MS) {
+    console.log(`[TTL-Debug] ${message}`, data ? data : '');
+    logCache.set(key, now);
+  }
 };
 
 const ttlToSeconds = (ttl: string): number => {
@@ -26,53 +36,90 @@ const ttlToSeconds = (ttl: string): number => {
 export const useCountdown = (receivedAt: Date | null, ttlPreset: string) => {
   const [remaining, setRemaining] = useState(0);
   const [isExpired, setIsExpired] = useState(false);
+  const intervalRef = useRef<number | null>(null);
+  const expiresAtRef = useRef<number | null>(null);
+  
+  // Memoize the expiration time calculation to prevent unnecessary recalculations
+  const expiresAt = useMemo(() => {
+    if (!receivedAt) return null;
+    const ttlSeconds = ttlToSeconds(ttlPreset);
+    if (ttlSeconds === 0) return null;
+    return receivedAt.getTime() + ttlSeconds * 1000;
+  }, [receivedAt, ttlPreset]);
 
   useEffect(() => {
+    // Throttle the effect trigger logs to prevent spam
     logTTL('🔄 useCountdown effect triggered', { 
       receivedAt: receivedAt?.toISOString(), 
       ttlPreset,
-      hasReceivedAt: !!receivedAt 
+      hasReceivedAt: !!receivedAt,
+      expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null
     });
 
-    if (!receivedAt) {
-      logTTL('⏸️ No receivedAt timestamp, countdown paused');
+    // Clear any existing interval
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+
+    if (!receivedAt || !expiresAt) {
+      logTTL('⏸️ No receivedAt timestamp or invalid TTL, countdown paused');
+      setRemaining(0);
+      setIsExpired(false);
       return;
     }
 
-    const ttlSeconds = ttlToSeconds(ttlPreset);
-    if (ttlSeconds === 0) {
-      logTTL('⚠️ Invalid TTL, setting as expired immediately');
-      setIsExpired(true);
-      return;
-    }
-
-    const expiresAt = receivedAt.getTime() + ttlSeconds * 1000;
+    expiresAtRef.current = expiresAt;
     
     logTTL('⏰ Starting countdown', {
       receivedAt: receivedAt.toISOString(),
       expiresAt: new Date(expiresAt).toISOString(),
-      ttlSeconds,
+      ttlSeconds: ttlToSeconds(ttlPreset),
       ttlPreset
     });
 
-    const interval = setInterval(() => {
-      const now = new Date().getTime();
-      const distance = expiresAt - now;
+    // Calculate initial remaining time
+    const now = new Date().getTime();
+    const initialDistance = expiresAt - now;
+    
+    if (initialDistance <= 0) {
+      logTTL('⏱️ Message already expired!', { 
+        expiredBy: Math.abs(initialDistance / 1000) + ' seconds'
+      });
+      setRemaining(0);
+      setIsExpired(true);
+      return;
+    }
 
-      if (distance < 0) {
+    // Set initial remaining time
+    const initialSecondsRemaining = Math.ceil(initialDistance / 1000);
+    setRemaining(initialSecondsRemaining);
+    setIsExpired(false);
+
+    // Start countdown interval
+    intervalRef.current = window.setInterval(() => {
+      const currentTime = new Date().getTime();
+      const distance = expiresAtRef.current! - currentTime;
+
+      if (distance <= 0) {
         logTTL('⏱️ Message expired!', { 
           messageId: 'current-message',
           expiredBy: Math.abs(distance / 1000) + ' seconds'
         });
-        clearInterval(interval);
+        
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+        
         setRemaining(0);
         setIsExpired(true);
       } else {
         const secondsRemaining = Math.ceil(distance / 1000);
         setRemaining(secondsRemaining);
         
-        // Log every 30 seconds and final 10 seconds for debugging
-        if (secondsRemaining % 30 === 0 || secondsRemaining <= 10) {
+        // Only log critical countdown milestones to reduce spam
+        if (secondsRemaining % 60 === 0 || secondsRemaining === 10 || secondsRemaining === 5) {
           logTTL(`⏳ ${secondsRemaining}s remaining`);
         }
       }
@@ -80,9 +127,22 @@ export const useCountdown = (receivedAt: Date | null, ttlPreset: string) => {
 
     return () => {
       logTTL('🧹 Countdown cleanup');
-      clearInterval(interval);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     };
-  }, [receivedAt, ttlPreset]);
+  }, [expiresAt, receivedAt, ttlPreset]); // Use memoized expiresAt as dependency
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, []);
 
   return { remaining, isExpired };
 }; 

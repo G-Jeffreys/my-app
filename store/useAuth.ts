@@ -67,7 +67,7 @@ export const useAuth = create<AuthState>((set) => ({
             // Create the user document in Firestore
             const newUserData = {
               id: firebaseUser.uid,
-              displayName: firebaseUser.displayName || "",
+              displayName: firebaseUser.displayName || generateDefaultDisplayName(firebaseUser.email),
               email: firebaseUser.email,
               photoURL: firebaseUser.photoURL,
               createdAt: new Date(),
@@ -107,7 +107,7 @@ export const useAuth = create<AuthState>((set) => ({
           // Create user document in Firestore as fallback
           const fallbackUserData = {
             id: firebaseUser.uid,
-            displayName: firebaseUser.displayName || "",
+            displayName: firebaseUser.displayName || generateDefaultDisplayName(firebaseUser.email),
             email: firebaseUser.email,
             photoURL: firebaseUser.photoURL,
             createdAt: new Date(),
@@ -197,5 +197,37 @@ export const useAuth = create<AuthState>((set) => ({
   },
   setUser: (user) => set({ user }),
 }));
+
+/**
+ * Generate a default display name when Firebase Auth doesn't provide one
+ * Uses the email username portion with proper capitalization
+ */
+function generateDefaultDisplayName(email: string | null): string {
+  console.log('[Auth] Generating default display name for email:', email);
+  
+  if (!email) {
+    const randomName = `User${Math.floor(Math.random() * 1000)}`;
+    console.log('[Auth] No email provided, using random name:', randomName);
+    return randomName;
+  }
+
+  // Extract username from email (before @)
+  const username = email.split('@')[0];
+  
+  // Clean up common patterns and capitalize properly
+  const cleanUsername = username
+    .replace(/[._-]/g, ' ') // Replace dots, underscores, dashes with spaces
+    .replace(/\d+/g, '') // Remove numbers
+    .trim()
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()) // Capitalize each word
+    .join(' ')
+    .substring(0, 20); // Limit length
+
+  const defaultName = cleanUsername || `User${Math.floor(Math.random() * 1000)}`;
+  console.log('[Auth] Generated default display name:', defaultName, 'from email:', email);
+  
+  return defaultName;
+}
 
 // Note: Initialize auth listener manually in App.tsx after Firebase is ready

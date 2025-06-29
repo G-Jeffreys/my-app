@@ -1,5 +1,6 @@
 {
-  "name": "functions",
+  "name": "snapconnect-functions",
+  "description": "Cloud Functions for SnapConnect",
   "scripts": {
     "lint": "echo 'Skipping lint for deployment'",
     "build": "tsc",

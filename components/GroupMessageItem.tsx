@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native";
 import { VideoContentFit } from "expo-video";
 import { useAuth } from "../store/useAuth";
@@ -8,6 +8,7 @@ import { Message, FirestoreTimestamp } from "../models/firestore/message";
 import { User } from "../models/firestore/user";
 import PlatformVideo from "./PlatformVideo";
 import SummaryLine from "./SummaryLine";
+import FullScreenImageViewer from "./FullScreenImageViewer";
 
 interface GroupMessageItemProps {
   message: Message;
@@ -28,6 +29,8 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
 }) => {
   const { user } = useAuth();
   const [isOpened, setIsOpened] = useState(false);
+  const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
+  const [isFullScreenVisible, setIsFullScreenVisible] = useState(false);
   const videoRef = useRef<any>(null);
 
   // Use receipt tracking for proper receivedAt timestamp
@@ -45,7 +48,8 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
   // Message is considered expired if either client-side countdown expired OR database marked it as expired
   const messageExpired = isExpired || isExpiredInDB;
 
-  logMessage('Rendering group message', {
+  // Memoize the log data to prevent object recreation on every render
+  const logData = useMemo(() => ({
     messageId: message.id,
     isOwnMessage,
     showSenderName,
@@ -56,16 +60,33 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
     isExpired,
     isExpiredInDB,
     messageExpired,
-    receiptLoading
-  });
+    receiptLoading,
+    // Add media debugging info
+    mediaType: message.mediaType,
+    mediaURL: message.mediaURL,
+    hasMediaURL: !!message.mediaURL,
+    messageText: message.text,
+    isOpened
+  }), [
+    message.id, isOwnMessage, showSenderName, sender?.displayName, receipt, 
+    receivedAt, remaining, isExpired, isExpiredInDB, messageExpired, receiptLoading,
+    message.mediaType, message.mediaURL, message.text, isOpened
+  ]);
 
-  // Handle marking message as viewed when opened
-  useEffect(() => {
+  logMessage('Rendering group message', logData);
+
+  // Memoize the markAsViewed callback to prevent recreation
+  const handleMarkAsViewed = useCallback(() => {
     if (isOpened && !isOwnMessage && receipt && !receipt.viewedAt && !messageExpired) {
       logMessage('Marking group message as viewed', { messageId: message.id });
       markAsViewed();
     }
   }, [isOpened, isOwnMessage, receipt, markAsViewed, message.id, messageExpired]);
+
+  // Handle marking message as viewed when opened
+  useEffect(() => {
+    handleMarkAsViewed();
+  }, [handleMarkAsViewed]);
 
   // Handle automatic closure when message expires while open
   useEffect(() => {
@@ -101,7 +122,16 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
 
   const handlePress = () => {
     if (!messageExpired || isOwnMessage) {
-      logMessage('Opening group message', { messageId: message.id, remaining, messageExpired });
+      logMessage('Opening group message', { 
+        messageId: message.id, 
+        remaining, 
+        messageExpired,
+        // Add media debugging when opening message
+        mediaType: message.mediaType,
+        mediaURL: message.mediaURL,
+        hasMediaURL: !!message.mediaURL,
+        isImage: message.mediaType === "image" || message.mediaType === 'photo'
+      });
       setIsOpened(true);
     } else {
       logMessage('Cannot open expired group message', { 
@@ -113,6 +143,35 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
       console.log('⏰ This message has expired and is no longer accessible');
     }
   };
+
+  const handleSummaryPress = () => {
+    console.log(`[GroupMessageItem] ${isSummaryExpanded ? 'Collapsing' : 'Expanding'} summary for expired message:`, message.id);
+    console.log('[GroupMessageItem] Summary expansion state change:', { 
+      messageId: message.id, 
+      previousState: isSummaryExpanded, 
+      newState: !isSummaryExpanded,
+      senderName: sender?.displayName,
+      willUseExpandedContainer: !isSummaryExpanded  // New state will trigger expanded container
+    });
+    setIsSummaryExpanded(!isSummaryExpanded);
+  };
+
+  const handleImagePress = useCallback(() => {
+    if ((message.mediaType === "image" || message.mediaType === 'photo') && message.mediaURL && !messageExpired) {
+      logMessage('Opening full-screen image viewer for group message', { 
+        messageId: message.id, 
+        mediaURL: message.mediaURL,
+        isExpired: messageExpired,
+        senderName: sender?.displayName
+      });
+      setIsFullScreenVisible(true);
+    }
+  }, [message.mediaType, message.mediaURL, message.id, messageExpired, sender?.displayName]);
+
+  const handleCloseFullScreen = useCallback(() => {
+    logMessage('Closing full-screen image viewer for group message', { messageId: message.id });
+    setIsFullScreenVisible(false);
+  }, [message.id]);
 
   const formatTimestamp = (timestamp: FirestoreTimestamp) => {
     if (!timestamp) return 'Unknown time';
@@ -155,7 +214,7 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
           </Text>
           {message.text && (
             <Text style={styles.previewText} numberOfLines={2}>
-              {message.mediaURL ? `📎 ${message.text}` : message.text}
+              {message.mediaURL ? `�� ${message.text}` : message.text}
             </Text>
           )}
           {/* No AI summary for sender - they know what they sent */}
@@ -174,16 +233,36 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
 
   // Show expired message with summary for recipients
   if (messageExpired && !isOwnMessage && message.hasSummary) {
+    // Log container expansion state for group messages
+    console.log('[GroupMessageItem] Rendering expired group message with summary expansion:', {
+      messageId: message.id,
+      isSummaryExpanded,
+      senderName: sender?.displayName,
+      willApplyExpandedContainer: isSummaryExpanded,
+      willApplyExpandedContent: isSummaryExpanded
+    });
+    
     return (
-      <View style={[styles.messageContainer, { alignSelf: isOwnMessage ? 'flex-end' : 'flex-start' }]}>
+      <View style={[
+        styles.messageContainer, 
+        { alignSelf: isOwnMessage ? 'flex-end' : 'flex-start' },
+        // Use more screen width for expanded summaries to prevent text cutoff
+        isSummaryExpanded && styles.messageContainerExpanded
+      ]}>
         {/* Show sender name for group messages */}
         {showSenderName && sender && (
           <Text style={styles.senderName}>{sender.displayName || 'Unknown User'}</Text>
         )}
         
         <TouchableOpacity
-          style={[styles.messageContent, styles.expiredMessage]}
-          disabled={true} // No interaction for expired messages
+          style={[
+            styles.messageContent, 
+            styles.expiredMessage,
+            // Allow content to use full available width when expanded
+            isSummaryExpanded && styles.messageContentExpanded
+          ]}
+          onPress={handleSummaryPress} // Enable tapping to expand/collapse summary
+          activeOpacity={0.7}
         >
           {/* Expired message indicator */}
           <View style={styles.expiredIndicator}>
@@ -193,8 +272,27 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
             </Text>
           </View>
           
-          {/* Show AI summary if available */}
-          <SummaryLine messageId={message.id} />
+          {/* Expandable AI summary */}
+          <View style={styles.summarySection}>
+            <View style={styles.summaryHeader}>
+              <Text style={styles.summaryHeaderText}>
+                🤖 AI Summary
+              </Text>
+              <Text style={styles.expandIndicator}>
+                {isSummaryExpanded ? '▼ Tap to collapse' : '▶ Tap to expand'}
+              </Text>
+            </View>
+            
+            <View style={[
+              styles.summaryContent,
+              isSummaryExpanded && styles.summaryContentExpanded
+            ]}>
+              <SummaryLine 
+                messageId={message.id}
+                isExpanded={isSummaryExpanded}
+              />
+            </View>
+          </View>
           
           {/* Show when it expired */}
           {message.expiredAt && (
@@ -227,11 +325,24 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
         {isOpened ? (
           <>
             {/* Render content based on media type */}
-            {message.mediaType === "image" || message.mediaType === 'photo' ? (
-              <Image source={{ uri: message.mediaURL || "" }} style={styles.media} />
-            ) : message.mediaType === 'video' ? (
+            {(message.mediaType === "image" || message.mediaType === 'photo') && message.mediaURL ? (
+              <TouchableOpacity onPress={handleImagePress} activeOpacity={0.9}>
+                <Image 
+                  source={{ uri: message.mediaURL }} 
+                  style={styles.media} 
+                  resizeMode="contain"
+                  onError={(e) => {
+                    console.log('[GroupMessageItem] Image load error:', e.nativeEvent.error);
+                    console.log('[GroupMessageItem] Failed URL:', message.mediaURL);
+                  }}
+                  onLoad={() => console.log('[GroupMessageItem] Image loaded successfully:', message.mediaURL)}
+                  onLoadStart={() => console.log('[GroupMessageItem] Image loading started:', message.mediaURL)}
+                  onLoadEnd={() => console.log('[GroupMessageItem] Image loading finished:', message.mediaURL)}
+                />
+              </TouchableOpacity>
+            ) : message.mediaType === 'video' && message.mediaURL ? (
               <PlatformVideo
-                source={{ uri: message.mediaURL || "" }}
+                source={{ uri: message.mediaURL }}
                 style={styles.media}
                 contentFit="cover"
                 shouldPlay={false}
@@ -245,22 +356,46 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
               </View>
             )}
             
-            {/* TTL countdown timer */}
-            <View style={[
-              styles.timer,
-              messageExpired && styles.timerExpired
-            ]}>
-              <Text style={[
-                styles.timerText,
-                messageExpired && styles.timerTextExpired
+            {/* TTL countdown timer - positioned outside text area to not obscure content */}
+            {!message.text && (
+              <View style={[
+                styles.timer,
+                messageExpired && styles.timerExpired
               ]}>
-                {messageExpired ? 'EXPIRED' : `${remaining}s`}
-              </Text>
-            </View>
+                <Text style={[
+                  styles.timerText,
+                  messageExpired && styles.timerTextExpired
+                ]}>
+                  {messageExpired ? 'EXPIRED' : `${remaining}s`}
+                </Text>
+              </View>
+            )}
             
-            <Text style={styles.timestamp}>
-              {formatTimestamp(message.sentAt)}
-            </Text>
+            {/* TTL countdown for text messages - positioned below content */}
+            {message.text && (
+              <View style={styles.timerColumn}>
+                <View style={[
+                  styles.timerBottomRight,
+                  messageExpired && styles.timerExpired
+                ]}>
+                  <Text style={[
+                    styles.timerText,
+                    messageExpired && styles.timerTextExpired
+                  ]}>
+                    {messageExpired ? 'EXPIRED' : `${remaining}s`}
+                  </Text>
+                </View>
+                <Text style={styles.timestamp}>
+                  {formatTimestamp(message.sentAt)}
+                </Text>
+              </View>
+            )}
+            
+            {!message.text && (
+              <Text style={styles.timestamp}>
+                {formatTimestamp(message.sentAt)}
+              </Text>
+            )}
           </>
         ) : (
           <>
@@ -286,6 +421,17 @@ const GroupMessageItem: React.FC<GroupMessageItemProps> = ({
           </>
         )}
       </View>
+      
+      {/* Full-screen image viewer */}
+      <FullScreenImageViewer
+        visible={isFullScreenVisible}
+        imageUri={message.mediaURL || ''}
+        onClose={handleCloseFullScreen}
+        isExpired={messageExpired}
+        remaining={remaining}
+        showTTL={true}
+        messageId={message.id}
+      />
     </TouchableOpacity>
   );
 };
@@ -322,8 +468,12 @@ const styles = StyleSheet.create({
     maxWidth: '80%',
     backgroundColor: '#f0f0f0',
     borderRadius: 12,
-    padding: 10,
+    padding: 8,
     position: 'relative',
+  },
+  messageContentExpanded: {
+    maxWidth: '100%',
+    padding: 2,
   },
   statusText: {
     fontSize: 14,
@@ -372,14 +522,30 @@ const styles = StyleSheet.create({
   },
   media: {
     width: "100%",
-    height: 200,
+    minHeight: 150,
+    maxHeight: 300,
+    aspectRatio: 1,
     borderRadius: 8,
     marginBottom: 8,
+    backgroundColor: '#f0f0f0', // Show loading background
   },
   timer: {
     position: "absolute",
-    top: 15,
-    right: 15,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    // Default position - will be overridden by specific positioning styles
+    top: 8,
+    right: 8,
+  },
+  timerColumn: {
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    marginTop: 8,
+    gap: 4,
+  },
+  timerBottomRight: {
     backgroundColor: "rgba(0,0,0,0.7)",
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -416,8 +582,12 @@ const styles = StyleSheet.create({
   },
   messageContainer: {
     marginVertical: 4,
-    maxWidth: '80%',
+    maxWidth: '85%', // Increased from 80% to give more space
     paddingHorizontal: 16,
+  },
+  messageContainerExpanded: {
+    maxWidth: '100%', // Use full screen width when expanded
+    paddingHorizontal: 2,  // Reduce padding significantly to maximize text space
   },
   expiredMessage: {
     backgroundColor: '#f0f0f0',
@@ -450,6 +620,43 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 4,
     fontStyle: 'italic',
+  },
+  summarySection: {
+    marginVertical: 8,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#e3f2fd',
+  },
+  summaryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  summaryHeaderText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1976d2',
+    flex: 1, // Let header text expand
+  },
+  expandIndicator: {
+    fontSize: 9,
+    color: '#666',
+    fontStyle: 'italic',
+    maxWidth: '30%',
+  },
+  summaryContent: {
+    // Normal collapsed state - limit height and enable scrolling if needed
+    maxHeight: 60, // About 3 lines of text
+    width: '100%', // Ensure full width is used for text wrapping
+  },
+  summaryContentExpanded: {
+    // Expanded state - allow much more height with scrolling
+    maxHeight: 200, // Allow much more vertical space
+    minHeight: 60,  // Ensure minimum height for readability
+    width: '100%',  // Ensure full width is used for text wrapping
   },
 });
 

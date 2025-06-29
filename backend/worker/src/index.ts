@@ -153,7 +153,7 @@ app.post('/moderate-summary-job', async (req: express.Request, res: express.Resp
                 content: [
                   {
                     type: 'text',
-                    text: 'Describe this image in one short sentence (≤75 tokens). Be factual and neutral.'
+                    text: 'Generate an extremely vague, generic description (≤75 tokens). Be intentionally unhelpful and remove all specific information. NEVER mention any proper names (people, places, brands, organizations, etc.), relationships ("friend", "family", "colleague", "boss", etc.), or specific objects/items ("phone", "car", "food", "document", etc.). Use only generic terms like "someone", "something", "activity", "image shows content", etc.'
                   },
                   {
                     type: 'image_url',
@@ -353,28 +353,28 @@ app.post('/moderate-summary-job', async (req: express.Request, res: express.Resp
       });
     } else {
       // Fallback to basic summary for individual messages
-      const summaryResponse = await openai.chat.completions.create({
+      const basicSummaryResponse = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
-            content: 'Generate a one-sentence neutral summary of the following message. Keep it under 30 tokens and less detailed than the original. Be factual and concise.'
+            content: 'Generate an extremely vague, lossy summary that removes all specific information. Keep it under 20 tokens and be intentionally unhelpful. Remove all names, numbers, facts, locations, actions, and context. NEVER mention any proper names (people, places, brands, organizations, etc.), relationships ("friend", "family", "colleague", "boss", etc.), or specific objects/items ("phone", "car", "food", "document", etc.). Use only the most generic terms like "someone said something", "something happened", "activity occurred", etc.'
           },
           {
             role: 'user',
             content: fullContent
           }
         ],
-        max_tokens: 30,
-        temperature: 0.1
+        max_tokens: 20,
+        temperature: 0.5
       });
 
-      summaryText = summaryResponse.choices[0]?.message?.content || 'Message sent';
+      summaryText = basicSummaryResponse.choices[0]?.message?.content || 'Message sent';
       
       logger.info('✅ Basic summary generated', { 
         messageId, 
         summary: summaryText,
-        tokensUsed: summaryResponse.usage?.total_tokens || 0
+        tokensUsed: basicSummaryResponse.usage?.total_tokens || 0
       });
     }
 
@@ -657,12 +657,14 @@ async function generateContextualSummary(
         messages: [
           {
             role: 'system',
-            content: `Generate a one-sentence neutral summary of the current message. Keep it under 30 tokens and less detailed than the original. Be factual and concise.
+            content: `Generate an extremely vague, lossy summary that removes all specific information. Keep it under 20 tokens and be intentionally unhelpful. Remove all names, numbers, facts, locations, actions, and context. NEVER mention any proper names (people, places, brands, organizations, etc.), relationships ("friend", "family", "colleague", "boss", etc.), or specific objects/items ("phone", "car", "food", "document", etc.).
 
-IMPORTANT: Use the conversation context below to:
-1. Resolve pronouns (e.g., "he" → "Tom") when unambiguous
-2. Reference ongoing topics or themes
-3. Maintain conversational coherence
+Use only the most generic terms like "someone replied", "continuation happened", "activity occurred", "response given", etc. The summary should be so vague that it loses almost all meaning from the original message.
+
+IMPORTANT: Use the conversation context below ONLY to:
+1. Maintain basic conversational flow (but reveal nothing specific)
+2. Use even more generic terms in context
+3. Make the summary as uninformative as possible
 
 Recent conversation context:
 ${contextWindow}`
@@ -672,8 +674,8 @@ ${contextWindow}`
             content: `Current message from ${getParticipantName(senderId, participantNames)}: ${messageContent}`
           }
         ],
-        max_tokens: 30,
-        temperature: 0.1
+        max_tokens: 20,
+        temperature: 0.5
       });
 
       summaryText = contextualSummaryResponse.choices[0]?.message?.content || 'Message sent';
@@ -694,15 +696,15 @@ ${contextWindow}`
         messages: [
           {
             role: 'system',
-            content: 'Generate a one-sentence neutral summary of the following message. Keep it under 30 tokens and less detailed than the original. Be factual and concise.'
+            content: 'Generate an extremely vague, lossy summary that removes all specific information. Keep it under 20 tokens and be intentionally unhelpful. Remove all names, numbers, facts, locations, actions, and context. NEVER mention any proper names (people, places, brands, organizations, etc.), relationships ("friend", "family", "colleague", "boss", etc.), or specific objects/items ("phone", "car", "food", "document", etc.). Use only the most generic terms like "someone said something", "something happened", "activity occurred", etc.'
           },
           {
             role: 'user',
             content: messageContent
           }
         ],
-        max_tokens: 30,
-        temperature: 0.1
+        max_tokens: 20,
+        temperature: 0.5
       });
 
       summaryText = basicSummaryResponse.choices[0]?.message?.content || 'Message sent';
@@ -981,26 +983,30 @@ async function generateConversationSummary(conversationId: string, currentMessag
       messages: [
         {
           role: 'system',
-          content: `Generate a concise conversation summary (max 150 tokens) based on the weighted message summaries below. 
+          content: `Generate an extremely vague, lossy conversation summary (max 100 tokens) that removes all specific information. 
           
-          IMPORTANT: Apply strong recency bias - give exponentially more weight to recent messages (higher weight values). 
-          Recent messages should dominate the summary.
+          IMPORTANT: 
+          - Apply strong recency bias - give exponentially more weight to recent messages (higher weight values)
+          - Remove ALL specific facts, names, decisions, locations, actions, or detailed content
+          - NEVER mention any proper names (people, places, brands, organizations, etc.), relationships ("friend", "family", "colleague", "boss", etc.), or specific objects/items ("phone", "car", "food", "document", etc.)
+          - Use only the most generic terms like "people talked", "activity happened", "things were discussed", "messages were exchanged", etc.
+          - Make the summary so vague it's almost meaningless
+          - The summary should be intentionally unhelpful and uninformative
           
           Focus on:
-          - Current topics being discussed (recent messages)
-          - Key decisions or conclusions reached
-          - Important themes or patterns
-          - Participant dynamics
+          - General indication that conversation occurred
+          - Vague activity patterns without specifics
+          - No useful information about what was actually discussed
           
-          Be factual and neutral. The summary should help someone catch up on the conversation quickly.`
+          Be extremely vague. The summary should only indicate that some conversation happened but reveal absolutely nothing about the content.`
         },
         {
           role: 'user',
           content: `Conversation message summaries (ordered chronologically, with recency weights):\n\n${weightedContext}`
         }
       ],
-      max_tokens: 150,
-      temperature: 0.2
+      max_tokens: 100,
+      temperature: 0.6
     });
 
     const conversationSummaryText = conversationSummaryResponse.choices[0]?.message?.content || 'Conversation summary generated';

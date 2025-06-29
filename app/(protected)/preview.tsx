@@ -27,6 +27,7 @@ import { useAuth } from "../../store/useAuth";
 import Header from "../../components/Header";
 import PlatformVideo from "../../components/PlatformVideo";
 import TtlSelector from "../../components/TtlSelector";
+import FullScreenImageViewer from "../../components/FullScreenImageViewer";
 import { DEFAULT_TTL_PRESET, TtlPreset } from "../../config/messaging";
 
 export default function PreviewScreen() {
@@ -38,6 +39,7 @@ export default function PreviewScreen() {
     conversationId?: string;
   }>();
   const [isUploading, setIsUploading] = useState(false);
+  const [isFullScreenVisible, setIsFullScreenVisible] = useState(false);
   // TTL state management - initialize with user's default or system default
   const [selectedTtl, setSelectedTtl] = useState<TtlPreset>(
     user?.defaultTtl || DEFAULT_TTL_PRESET
@@ -186,13 +188,27 @@ export default function PreviewScreen() {
     setSelectedTtl(newTtl);
   };
 
+  const handleImagePress = () => {
+    if (type === "image" && uri) {
+      console.log('[PreviewScreen] Opening full-screen image viewer');
+      setIsFullScreenVisible(true);
+    }
+  };
+
+  const handleCloseFullScreen = () => {
+    console.log('[PreviewScreen] Closing full-screen image viewer');
+    setIsFullScreenVisible(false);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <Header title="Preview" showBackButton={true} />
       
       {/* Media Preview */}
       {type === "image" ? (
-        <Image source={{ uri }} style={styles.media} resizeMode="contain" />
+        <TouchableOpacity onPress={handleImagePress} activeOpacity={0.9} style={styles.media}>
+          <Image source={{ uri }} style={styles.media} resizeMode="contain" />
+        </TouchableOpacity>
       ) : (
         <PlatformVideo
           source={{ uri: uri } as VideoSource}
@@ -239,6 +255,17 @@ export default function PreviewScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* Full-screen image viewer */}
+      <FullScreenImageViewer
+        visible={isFullScreenVisible}
+        imageUri={uri || ''}
+        onClose={handleCloseFullScreen}
+        isExpired={false}
+        remaining={0}
+        showTTL={false}
+        messageId="preview"
+      />
     </SafeAreaView>
   );
 }

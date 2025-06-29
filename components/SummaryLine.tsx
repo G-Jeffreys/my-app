@@ -8,6 +8,7 @@ interface SummaryLineProps {
   messageId: string;
   onPress?: () => void;
   style?: any;
+  isExpanded?: boolean;
 }
 
 /**
@@ -27,13 +28,15 @@ interface SummaryLineProps {
 const SummaryLine: React.FC<SummaryLineProps> = ({ 
   messageId, 
   onPress, 
-  style 
+  style,
+  isExpanded = false
 }) => {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   console.log('[SummaryLine] Rendering for messageId:', messageId);
+  console.log('[SummaryLine] isExpanded prop received:', isExpanded);
 
   useEffect(() => {
     console.log('[SummaryLine] Setting up Firestore listener for messageId:', messageId);
@@ -127,6 +130,14 @@ const SummaryLine: React.FC<SummaryLineProps> = ({
   const confidenceLevel = summary.confidence || 0.7;
   const contextCount = summary.contextUsed?.length || 0;
   
+  // Log summary rendering details
+  console.log('[SummaryLine] Rendering summary:', { 
+    messageId, 
+    isExpanded, 
+    textLength: summary.summaryText?.length,
+    numberOfLines: isExpanded ? 'unlimited' : 2
+  });
+  
   return (
     <TouchableOpacity 
       style={[styles.container, styles.summaryContainer, style]}
@@ -138,7 +149,14 @@ const SummaryLine: React.FC<SummaryLineProps> = ({
           {hasContext ? '🧠' : '🤖'}
         </Text>
         <View style={styles.summaryTextContainer}>
-          <Text style={styles.summaryText}>
+          <Text 
+            style={[
+              styles.summaryText,
+              !isExpanded && styles.summaryTextTruncated
+            ]} 
+            numberOfLines={isExpanded ? undefined : 2}
+            ellipsizeMode="tail"
+          >
             {summary.summaryText}
           </Text>
           
@@ -160,25 +178,19 @@ const SummaryLine: React.FC<SummaryLineProps> = ({
           )}
         </View>
       </View>
-      
-      {/* Optional: Show processing metadata */}
-      {__DEV__ && (
-        <Text style={styles.debugText}>
-          {summary.model} • {summary.processingTimeMs}ms
-          {hasContext && ` • RAG: ${contextCount} context msgs`}
-          {` • confidence: ${confidenceLevel}`}
-        </Text>
-      )}
     </TouchableOpacity>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginVertical: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    marginVertical: 2,
     borderRadius: 8,
+    // Ensure container takes full available width
+    width: '100%',
+    maxWidth: '100%',
   },
   
   // Shimmer loading state
@@ -211,30 +223,38 @@ const styles = StyleSheet.create({
   
   // Summary display state
   summaryContainer: {
-    backgroundColor: '#f0f8ff',
+    backgroundColor: '#f8f9fa',
     borderWidth: 1,
-    borderColor: '#b3d9ff',
+    borderColor: '#e3f2fd',
+    // Allow vertical expansion when content is large
+    flexShrink: 0,
   },
   summaryContent: {
     flexDirection: 'row',
     alignItems: 'flex-start',
+    // Ensure the container takes full width and allocates space properly
+    width: '100%',
   },
   summaryIcon: {
-    fontSize: 16,
-    marginRight: 8,
+    fontSize: 12, // Made smaller to save space
+    marginRight: 4, // Reduced margin
     marginTop: 1,
+    width: 16, // Fixed width to prevent expansion
   },
   summaryText: {
-    flex: 1,
     fontSize: 14,
     lineHeight: 20,
     color: '#1a1a1a',
     fontWeight: '500',
-    flexShrink: 1,
+    // Remove all flex constraints that might be causing issues
+    width: '100%', // Use explicit width instead of flex
   },
   summaryTextContainer: {
-    flex: 1,
-    flexShrink: 1,
+    // Remove all flex constraints and use explicit width calculation
+    width: '90%', // Use most of available space, leaving room for icon
+  },
+  summaryTextTruncated: {
+    opacity: 0.8,
   },
   
   // RAG Context indicators
@@ -286,14 +306,6 @@ const styles = StyleSheet.create({
     color: '#6c757d',
     textAlign: 'center',
     fontStyle: 'italic',
-  },
-  
-  // Debug information (development only)
-  debugText: {
-    fontSize: 10,
-    color: '#adb5bd',
-    marginTop: 4,
-    textAlign: 'right',
   },
 });
 

@@ -83,6 +83,21 @@ const SummaryLine: React.FC<SummaryLineProps> = ({
     };
   }, [messageId]);
 
+  // Timeout fallback: if AI does not respond within 10 s, stop the shimmer
+  useEffect(() => {
+    if (!isLoading) return; // only when loading
+
+    const timer = setTimeout(() => {
+      // if still loading and no summary, switch to fallback
+      if (isLoading && !summary) {
+        console.warn('[SummaryLine] ⏱️ AI summary timeout fallback triggered', { messageId });
+        setIsLoading(false);
+      }
+    }, 10000); // 10 seconds
+
+    return () => clearTimeout(timer);
+  }, [isLoading, summary, messageId]);
+
   // Shimmer loading state
   if (isLoading) {
     return (

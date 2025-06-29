@@ -407,7 +407,8 @@ const TASK_QUEUE_CONFIG = {
   LOCATION: process.env.TASK_QUEUE_LOCATION ?? 'us-central1',
   QUEUE_NAME: process.env.MODERATION_TASK_QUEUE_NAME ?? 'moderate-summary-queue',
   WORKER_ENDPOINT: process.env.MODERATION_WORKER_URL ?? 
-    'https://moderation-worker-yyaoaphbjq-uc.a.run.app/moderate-summary-job',
+    'https://moderation-worker-435345795137.us-central1.run.app' +
+    '/moderate-summary-job',
 };
 
 export const enqueueModerationJob = onDocumentCreated(

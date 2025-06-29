@@ -53,7 +53,8 @@ export const MESSAGE_LIMITS = {
 // Future LLM configuration (scaffolding)
 export const LLM_CONFIG = {
   MAX_SUMMARY_TOKENS: 30, // As per PRD FR-5
-  BATCH_SIZE_FOR_RAG: 20, // Chunk every ~20 messages for RAG
+  BATCH_SIZE_FOR_RAG: 30, // Generate conversation summary every 30 messages
+  CONVERSATION_SUMMARY_TOKENS: 150, // Conversation digest length
   SUMMARY_GENERATION_TIMEOUT_MS: 5000, // 5s as per PRD
 } as const;
 

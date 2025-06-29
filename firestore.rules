@@ -135,6 +135,16 @@ service cloud.firestore {
       allow create, update, delete: if isSystemServiceAccount();
     }
 
+    // Conversation-level AI digests (150-token batches)
+    match /conversationSummaries/{summaryId} {
+      // Read: only participants of the conversation may read the digest
+      allow read: if request.auth.uid != null &&
+        isParticipantInConversation(request.auth.uid, resource.data.conversationId);
+
+      // Writes come exclusively from backend workers (Cloud Functions / Run)
+      allow create, update, delete: if isSystemServiceAccount();
+    }
+
     // FIXED: RAG chunks for group conversations - allow system writes
     match /ragChunks/{chunkId} {
       // Read: participants in the conversation can read

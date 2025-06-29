@@ -309,8 +309,30 @@ app.post('/moderate-summary-job', async (req: express.Request, res: express.Resp
     let summaryText: string;
     let contextUsed: string[] = [];
     let confidence: number = 0.7;
+    let useRAG = false;
 
+    // Check if RAG is enabled for this conversation
     if (conversationId) {
+      try {
+        const conversationDoc = await db.collection('conversations').doc(conversationId).get();
+        const conversationData = conversationDoc.exists ? conversationDoc.data() : null;
+        useRAG = conversationData?.ragEnabled === true;
+        
+        logger.info('🧠 RAG enablement check', { 
+          conversationId, 
+          ragEnabled: conversationData?.ragEnabled,
+          useRAG 
+        });
+      } catch (error) {
+        logger.warn('⚠️ Failed to check RAG enablement, defaulting to basic summary', {
+          conversationId,
+          error: (error as Error).message
+        });
+        useRAG = false;
+      }
+    }
+
+    if (useRAG && conversationId) {
       // Use enhanced RAG-powered summary for group conversations
       const contextualResult = await generateContextualSummary(
         fullContent,
@@ -376,7 +398,7 @@ app.post('/moderate-summary-job', async (req: express.Request, res: express.Resp
     await db.collection('summaries').doc(messageId).set(summaryData);
 
     // T2.4b - Generate embedding and upsert to Pinecone
-    if (conversationId) {
+    if (useRAG && conversationId) {
       try {
         logger.info('🧠 Generating embedding for RAG', { messageId, conversationId });
 
@@ -429,6 +451,11 @@ app.post('/moderate-summary-job', async (req: express.Request, res: express.Resp
       hasSummary: true,
       summaryGenerated: true
     });
+
+    // Update conversation message count and check if we need to generate conversation summary
+    if (conversationId) {
+      await updateConversationMessageCount(conversationId);
+    }
 
     // Log analytics event
     logger.info('📊 summary_generated', {
@@ -833,3 +860,206 @@ app.get('/health', (req: express.Request, res: express.Response) => {
     version: '3.0.0-rag'
   });
 });
+
+/**
+ * Update conversation message count and trigger conversation summary if needed
+ */
+async function updateConversationMessageCount(conversationId: string): Promise<void> {
+  try {
+    const conversationRef = db.collection('conversations').doc(conversationId);
+    const conversationDoc = await conversationRef.get();
+    
+    if (!conversationDoc.exists) {
+      logger.warn('Conversation not found for message count update', { conversationId });
+      return;
+    }
+
+    const conversationData = conversationDoc.data();
+    const currentMessageCount = (conversationData?.messageCount || 0) + 1;
+    const lastProcessedCount = conversationData?.lastProcessedMessageCount || 0;
+    
+    // Update message count
+    await conversationRef.update({
+      messageCount: currentMessageCount,
+      lastActivity: new Date()
+    });
+
+    logger.info('📊 Conversation message count updated', { 
+      conversationId, 
+      currentMessageCount,
+      lastProcessedCount 
+    });
+
+    // Check if we need to generate conversation summary (every 30 messages)
+    const BATCH_SIZE = 30;
+    const messagesSinceLastSummary = currentMessageCount - lastProcessedCount;
+    
+    if (messagesSinceLastSummary >= BATCH_SIZE && conversationData?.ragEnabled === true) {
+      logger.info('🧠 Triggering conversation summary generation', { 
+        conversationId, 
+        messagesSinceLastSummary,
+        currentMessageCount,
+        ragEnabled: conversationData.ragEnabled
+      });
+      
+      // Generate conversation summary asynchronously
+      generateConversationSummary(conversationId, currentMessageCount)
+        .catch(error => {
+          logger.error('❌ Error generating conversation summary', {
+            conversationId,
+            error: error.message
+          });
+        });
+    } else if (messagesSinceLastSummary >= BATCH_SIZE) {
+      logger.info('📝 Skipping conversation summary - RAG disabled', { 
+        conversationId, 
+        messagesSinceLastSummary,
+        ragEnabled: conversationData?.ragEnabled 
+      });
+    }
+
+  } catch (error) {
+    logger.error('❌ Error updating conversation message count', {
+      conversationId,
+      error: (error as Error).message
+    });
+  }
+}
+
+/**
+ * Generate conversation summary from all RAG-processed message summaries
+ * with exponential recency bias
+ */
+async function generateConversationSummary(conversationId: string, currentMessageCount: number): Promise<void> {
+  const startTime = Date.now();
+  
+  try {
+    logger.info('🧠 Starting conversation summary generation', { 
+      conversationId, 
+      currentMessageCount 
+    });
+
+    // Get all summaries for this conversation
+    const summariesSnapshot = await db
+      .collection('summaries')
+      .where('conversationId', '==', conversationId)
+      .orderBy('generatedAt', 'asc')
+      .get();
+
+    logger.info('🔍 Firestore query executed for summaries', { 
+      conversationId, 
+      docCount: summariesSnapshot.docs.length,
+      isEmpty: summariesSnapshot.empty
+    });
+
+    if (summariesSnapshot.empty) {
+      logger.warn('No summaries found for conversation', { conversationId });
+      return;
+    }
+
+    const summaries = summariesSnapshot.docs.map((doc: any) => doc.data());
+    logger.info('📚 Retrieved summaries for conversation', { 
+      conversationId, 
+      summaryCount: summaries.length 
+    });
+
+    // Calculate recency weights (exponential decay)
+    const summariesWithWeights = summaries.map((summary: any, index: number) => {
+      const position = index / (summaries.length - 1); // 0 to 1, where 1 is most recent
+      const weight = Math.pow(position, 2) * 0.7 + 0.3; // Exponential bias: 0.3 to 1.0
+      return { ...summary, weight };
+    });
+
+    // Build weighted context for AI prompt
+    const weightedContext = summariesWithWeights
+      .map((summary: any) => `[Weight: ${summary.weight.toFixed(1)}] ${summary.summaryText}`)
+      .join('\n');
+
+    // Generate conversation summary with recency bias
+    const conversationSummaryResponse = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `Generate a concise conversation summary (max 150 tokens) based on the weighted message summaries below. 
+          
+          IMPORTANT: Apply strong recency bias - give exponentially more weight to recent messages (higher weight values). 
+          Recent messages should dominate the summary.
+          
+          Focus on:
+          - Current topics being discussed (recent messages)
+          - Key decisions or conclusions reached
+          - Important themes or patterns
+          - Participant dynamics
+          
+          Be factual and neutral. The summary should help someone catch up on the conversation quickly.`
+        },
+        {
+          role: 'user',
+          content: `Conversation message summaries (ordered chronologically, with recency weights):\n\n${weightedContext}`
+        }
+      ],
+      max_tokens: 150,
+      temperature: 0.2
+    });
+
+    const conversationSummaryText = conversationSummaryResponse.choices[0]?.message?.content || 'Conversation summary generated';
+
+    // Calculate batch number
+    const batchNumber = Math.ceil(currentMessageCount / 30);
+    const summaryId = `${conversationId}_${batchNumber}`;
+
+    // Calculate weights for metadata
+    const recentMessagesWeight = summariesWithWeights
+      .slice(-Math.ceil(summariesWithWeights.length * 0.3))
+      .reduce((sum: number, s: any) => sum + s.weight, 0) / Math.ceil(summariesWithWeights.length * 0.3);
+    
+    const olderMessagesWeight = summariesWithWeights
+      .slice(0, Math.floor(summariesWithWeights.length * 0.7))
+      .reduce((sum: number, s: any) => sum + s.weight, 0) / Math.floor(summariesWithWeights.length * 0.7);
+
+    // Store conversation summary
+    const conversationSummaryData = {
+      id: summaryId,
+      conversationId,
+      batchNumber,
+      summaryText: conversationSummaryText,
+      messagesIncluded: currentMessageCount,
+      messageRange: {
+        startCount: Math.max(1, currentMessageCount - 29), // Last 30 messages
+        endCount: currentMessageCount
+      },
+      generatedAt: new Date(),
+      model: 'gpt-4o-mini',
+      processingTimeMs: Date.now() - startTime,
+      confidence: 0.85, // High confidence for conversation summaries
+      recentMessagesWeight,
+      olderMessagesWeight
+    };
+
+    await db.collection('conversationSummaries').doc(summaryId).set(conversationSummaryData);
+
+    // Update conversation with summary info
+    await db.collection('conversations').doc(conversationId).update({
+      lastProcessedMessageCount: currentMessageCount,
+      lastConversationSummaryAt: new Date()
+    });
+
+    logger.info('✅ Conversation summary generated and stored', {
+      conversationId,
+      summaryId,
+      batchNumber,
+      messagesIncluded: currentMessageCount,
+      summaryLength: conversationSummaryText.length,
+      processingTimeMs: Date.now() - startTime
+    });
+
+  } catch (error) {
+    logger.error('❌ Error generating conversation summary', {
+      conversationId,
+      currentMessageCount,
+      error: (error as Error).message,
+      stack: (error as Error).stack
+    });
+  }
+}

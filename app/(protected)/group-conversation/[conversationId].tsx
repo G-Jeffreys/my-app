@@ -28,6 +28,8 @@ import { User } from '../../../models/firestore/user';
 import Header from '../../../components/Header';
 import GroupMessageItem from '../../../components/GroupMessageItem';
 import InConversationComposer from '../../../components/InConversationComposer';
+import ConversationSummaryBanner from '../../../components/ConversationSummaryBanner';
+import ProcessingDemarcationLine from '../../../components/ProcessingDemarcationLine';
 
 console.log('[GroupConversation] Component loaded');
 
@@ -40,6 +42,8 @@ export default function GroupConversationScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [participants, setParticipants] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [processedMessageCount, setProcessedMessageCount] = useState(0);
+  const [totalMessageCount, setTotalMessageCount] = useState(0);
 
   console.log('[GroupConversation] Rendering for conversation:', conversationId);
 
@@ -59,8 +63,21 @@ export default function GroupConversationScreen() {
         const conversationUnsubscribe = onSnapshot(conversationRef, async (doc) => {
           if (doc.exists()) {
             const conversationData = { id: doc.id, ...doc.data() } as Conversation;
-            console.log('[GroupConversation] Conversation updated:', conversationData.name);
+            console.log('[GroupConversation] Conversation updated:', {
+              name: conversationData.name,
+              messageCount: conversationData.messageCount,
+              lastProcessedMessageCount: conversationData.lastProcessedMessageCount,
+              ragEnabled: conversationData.ragEnabled
+            });
             setConversation(conversationData);
+
+            // Update processed message count from conversation data
+            const processedCount = conversationData.lastProcessedMessageCount || 0;
+            console.log('[GroupConversation] Updating processedMessageCount:', {
+              previousCount: processedMessageCount,
+              newCount: processedCount
+            });
+            setProcessedMessageCount(processedCount);
 
             // Fetch participant details
             await fetchParticipants(conversationData.participantIds);
@@ -74,40 +91,45 @@ export default function GroupConversationScreen() {
         const messagesQuery = query(
           collection(firestore, 'messages'),
           where('conversationId', '==', conversationId),
-          orderBy('sentAt', 'asc') // Ascending for chat-like view
+          orderBy('sentAt', 'asc')
         );
 
-        const messagesUnsubscribe = onSnapshot(
-          messagesQuery, 
+        const unsubscribeMessages = onSnapshot(
+          messagesQuery,
           (snapshot) => {
-            // Phase 2: Filter out blocked or undelivered messages
-            const messagesList = snapshot.docs
-              .map(doc => ({ id: doc.id, ...doc.data() }) as Message)
-              .filter(message => {
-                // For backward compatibility, treat messages without these flags as delivered
-                if (message.blocked === true || message.delivered === false) {
-                  console.log('[GroupConversation] Filtering out blocked/undelivered message:', message.id);
-                  return false;
-                }
-                return true;
-              });
+            const messagesData = snapshot.docs.map(doc => ({
+              id: doc.id,
+              ...doc.data()
+            })) as Message[];
+
+            console.log('[GroupConversation] Messages updated:', { 
+              messageCount: messagesData.length,
+              conversationId 
+            });
+
+            setMessages(messagesData);
+            setTotalMessageCount(messagesData.length);
             
-            console.log('[GroupConversation] Messages updated:', messagesList.length);
-            setMessages(messagesList);
+            // Update conversation message count if it's different
+            if (conversation && messagesData.length !== conversation.messageCount) {
+              console.log('[GroupConversation] Message count mismatch - updating:', {
+                actualCount: messagesData.length,
+                storedCount: conversation.messageCount
+              });
+            }
+            
             setLoading(false);
           },
           (error) => {
-            console.error('[GroupConversation] Messages query error:', error);
-            // Set loading to false even if there's an error so UI doesn't get stuck
+            console.error('[GroupConversation] Error loading messages:', error);
             setLoading(false);
-            setMessages([]); // Show empty state
           }
         );
 
         return () => {
           console.log('[GroupConversation] Cleaning up listeners');
           conversationUnsubscribe();
-          messagesUnsubscribe();
+          unsubscribeMessages();
         };
 
       } catch (error) {
@@ -149,19 +171,36 @@ export default function GroupConversationScreen() {
     // Messages will be updated via the real-time listener
   };
 
-  const renderMessage = ({ item, index }: { item: Message; index: number }) => {
-    const sender = participants.find(p => p.id === item.senderId);
+  const renderMessageItem = ({ item, index }: { item: Message; index: number }) => {
+    const messagePosition = index + 1; // 1-based position
+    const shouldShowDemarcation = messagePosition === processedMessageCount + 1;
     const isOwnMessage = item.senderId === user?.uid;
+    const sender = participants.find(p => p.id === item.senderId);
     const previousMessage = index > 0 ? messages[index - 1] : null;
     const showSenderName = !isOwnMessage && (!previousMessage || previousMessage.senderId !== item.senderId);
 
+    console.log('[GroupConversation] Rendering message:', {
+      messageId: item.id,
+      position: messagePosition,
+      processedCount: processedMessageCount,
+      shouldShowDemarcation
+    });
+
     return (
-      <GroupMessageItem
-        message={item}
-        sender={sender}
-        isOwnMessage={isOwnMessage}
-        showSenderName={showSenderName}
-      />
+      <>
+        {shouldShowDemarcation && (
+          <ProcessingDemarcationLine 
+            processedCount={processedMessageCount} 
+            totalCount={totalMessageCount} 
+          />
+        )}
+        <GroupMessageItem 
+          message={item} 
+          sender={sender}
+          isOwnMessage={isOwnMessage}
+          showSenderName={showSenderName}
+        />
+      </>
     );
   };
 
@@ -204,46 +243,70 @@ export default function GroupConversationScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <Header 
-        title={conversation.name || `Group (${participants.length})`}
-        showBackButton 
-        rightComponent={rightComponent}
-      />
-      
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoidingView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.content}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+        keyboardVerticalOffset={Platform.OS === 'android' ? 25 : 0}
       >
-        {/* Participants Info */}
-        <View style={styles.participantsBar}>
-          <Text style={styles.participantsText}>
-            {participants.map(p => p.displayName || 'Unknown').join(', ')}
-          </Text>
-        </View>
+        <Header 
+          title={conversation?.name || 'Group Chat'} 
+          showBackButton={true}
+          rightComponent={
+            <TouchableOpacity 
+              onPress={() => router.push({
+                pathname: '/(protected)/group-settings/[conversationId]',
+                params: { conversationId }
+              })}
+              style={styles.settingsButton}
+            >
+              <Text style={styles.settingsIcon}>⚙️</Text>
+            </TouchableOpacity>
+          }
+        />
 
-        {/* Messages List */}
-        {messages.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No messages yet</Text>
-            <Text style={styles.emptySubtext}>Send the first message to get the conversation started!</Text>
+        {/* Conversation Summary Banner */}
+        <ConversationSummaryBanner 
+          conversationId={conversationId}
+          totalMessages={totalMessageCount}
+        />
+
+        {/* DEBUG: RAG Status Information */}
+        {__DEV__ && conversation && (
+          <View style={styles.debugContainer}>
+            <Text style={styles.debugTitle}>🔍 RAG Debug Info:</Text>
+            <Text style={styles.debugText}>RAG Enabled: {conversation.ragEnabled ? '✅ Yes' : '❌ No'}</Text>
+            <Text style={styles.debugText}>Message Count: {conversation.messageCount || 0}</Text>
+            <Text style={styles.debugText}>Last Processed: {conversation.lastProcessedMessageCount || 0}</Text>
+            <Text style={styles.debugText}>Total Messages: {totalMessageCount}</Text>
+            <Text style={styles.debugText}>Processed Count (State): {processedMessageCount}</Text>
+            <Text style={styles.debugText}>Messages Since Last Summary: {(conversation.messageCount || 0) - (conversation.lastProcessedMessageCount || 0)}</Text>
+            <Text style={styles.debugText}>Should Show Demarcation: {processedMessageCount > 0 && processedMessageCount < totalMessageCount ? '✅ Yes' : '❌ No'}</Text>
+          </View>
+        )}
+
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>Loading conversation...</Text>
           </View>
         ) : (
           <FlatList
             data={messages}
-            renderItem={renderMessage}
+            renderItem={renderMessageItem}
             keyExtractor={(item) => item.id}
             style={styles.messagesList}
             contentContainerStyle={styles.messagesContent}
-            showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
           />
         )}
 
-        {/* In-Conversation Composer */}
         <InConversationComposer
-          conversationId={conversationId!}
-          onMessageSent={handleMessageSent}
+          conversationId={conversationId}
+          onMessageSent={() => {
+            console.log('[GroupConversation] Message sent - refreshing data');
+            // Messages will update automatically via real-time listener
+          }}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -319,5 +382,34 @@ const styles = StyleSheet.create({
   },
   settingsButtonText: {
     fontSize: 20,
+  },
+  settingsIcon: {
+    fontSize: 20,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  keyboardAvoidingView: {
+    flex: 1,
+  },
+  debugContainer: {
+    padding: 16,
+    backgroundColor: '#f5f5f5',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  debugTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  debugText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 4,
   },
 }); 

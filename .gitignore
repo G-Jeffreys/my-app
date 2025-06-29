@@ -38,3 +38,23 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 *.apk
+
+# Firebase config files (contain API keys)
+GoogleService-Info.plist
+google-services.json
+
+# Code analysis/export files
+repomix-output.xml
+*.repomix
+
+# Build artifacts that might contain sensitive info
+backend/worker/dist/
+functions/lib/
+functions/dist/
+
+# Deployment scripts with potential secrets
+deploy_with_env.sh
+
+# Large build directories
+android/app/build/
+ios/build/

@@ -8,8 +8,7 @@ import { env } from "../../env";
 WebBrowser.maybeCompleteAuthSession();
 
 export default function Login() {
-  const handleGitHubSignIn = useAuth((state) => state.handleGitHubSignIn);
-  const authLoading = useAuth((state) => state.loading);
+  const { handleGitHubSignIn, loading, isSigningIn, error } = useAuth();
 
   const redirectUri = makeRedirectUri({
     scheme: 'my-app',
@@ -133,26 +132,49 @@ export default function Login() {
     promptAsync();
   };
 
+  // Show loading state if auth is in progress
+  if (loading || isSigningIn) {
+    console.log('[Login] Showing loading state - loading:', loading, 'isSigningIn:', isSigningIn);
+    return (
+      <View className="flex-1 items-center justify-center bg-white">
+        <ActivityIndicator size="large" color="#1F2937" className="mb-4" />
+        <Text className="text-lg font-semibold text-gray-700 mb-2">
+          {isSigningIn ? 'Signing you in...' : 'Loading...'}
+        </Text>
+        <Text className="text-sm text-gray-500 text-center px-8">
+          {isSigningIn ? 'Authenticating with GitHub' : 'Please wait'}
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View className="flex-1 items-center justify-center bg-white">
-      {authLoading ? (
-        <ActivityIndicator size="large" />
-      ) : (
-        <>
-          <Text className="text-xl mb-6">Login</Text>
-          <TouchableOpacity
-            disabled={!request}
-            onPress={onSignInPress}
-            className="bg-gray-800 px-4 py-3 rounded-lg flex-row items-center"
-          >
-            <Text className="text-white font-semibold">Sign in with GitHub</Text>
-          </TouchableOpacity>
-          
-          <Text className="text-sm text-gray-600 mt-4 text-center px-4">
-            Platform: {Platform.OS} | Using GitHub OAuth (React Native compatible)
-          </Text>
-        </>
+      <Text className="text-xl mb-6">Login</Text>
+      
+      {error && (
+        <View className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 mx-8">
+          <Text className="text-red-700 text-sm text-center">{error}</Text>
+        </View>
       )}
+      
+      <TouchableOpacity
+        disabled={!request || loading || isSigningIn}
+        onPress={onSignInPress}
+        className={`px-4 py-3 rounded-lg flex-row items-center ${
+          !request || loading || isSigningIn 
+            ? 'bg-gray-400' 
+            : 'bg-gray-800'
+        }`}
+      >
+        <Text className="text-white font-semibold">
+          {loading || isSigningIn ? 'Signing in...' : 'Sign in with GitHub'}
+        </Text>
+      </TouchableOpacity>
+      
+      <Text className="text-sm text-gray-600 mt-4 text-center px-4">
+        Platform: {Platform.OS} | Using GitHub OAuth (React Native compatible)
+      </Text>
     </View>
   );
 }

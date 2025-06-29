@@ -53,7 +53,8 @@ export const MESSAGE_LIMITS = {
 // Future LLM configuration (scaffolding)
 export const LLM_CONFIG = {
   MAX_SUMMARY_TOKENS: 30, // As per PRD FR-5
-  BATCH_SIZE_FOR_RAG: 20, // Chunk every ~20 messages for RAG
+  BATCH_SIZE_FOR_RAG: 30, // Generate conversation summary every 30 messages
+  CONVERSATION_SUMMARY_TOKENS: 150, // Conversation digest length
   SUMMARY_GENERATION_TIMEOUT_MS: 5000, // 5s as per PRD
 } as const;
 
@@ -81,5 +82,5 @@ export const TASK_QUEUE_CONFIG = {
   LOCATION: process.env.TASK_QUEUE_LOCATION ?? 'us-central1',
   QUEUE_NAME: process.env.MODERATION_TASK_QUEUE_NAME ?? 'moderate-summary-queue',
   // The URL of the Cloud Run worker; only used by the enqueue function
-  WORKER_ENDPOINT: process.env.MODERATION_WORKER_URL ?? 'https://moderation-worker-435345795137.us-central1.run.app/moderate-summary-job',
+  WORKER_ENDPOINT: process.env.MODERATION_WORKER_URL ?? 'https://moderation-worker-yyaoaphbjq-uc.a.run.app/moderate-summary-job',
 } as const; 

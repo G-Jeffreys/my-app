@@ -34,4 +34,8 @@ export interface Message {
    */
   delivered?: boolean;
   blocked?: boolean;
+  
+  // Phase 3: Expiration without deletion
+  expired?: boolean; // Whether message has reached its TTL and content is no longer accessible
+  expiredAt?: FirestoreTimestamp; // When the message was marked as expired
 } 

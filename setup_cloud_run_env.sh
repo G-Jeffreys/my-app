@@ -34,7 +34,7 @@ echo "✅ Cloud Run service updated with environment variables"
 echo "🔄 Testing pipeline..."
 
 # Test the pipeline by checking the health endpoint
-curl -s https://moderation-worker-435345795137.us-central1.run.app/health | jq '.'
+curl -s https://moderation-worker-yyaoaphbjq-uc.a.run.app/health | jq '.'
 
 echo "📋 Check if the failed task will retry automatically..."
 gcloud tasks list --queue=moderate-summary-queue --location=us-central1

@@ -83,6 +83,21 @@ const SummaryLine: React.FC<SummaryLineProps> = ({
     };
   }, [messageId]);
 
+  // Timeout fallback: if AI does not respond within 10 s, stop the shimmer
+  useEffect(() => {
+    if (!isLoading) return; // only when loading
+
+    const timer = setTimeout(() => {
+      // if still loading and no summary, switch to fallback
+      if (isLoading && !summary) {
+        console.warn('[SummaryLine] ⏱️ AI summary timeout fallback triggered', { messageId });
+        setIsLoading(false);
+      }
+    }, 10000); // 10 seconds
+
+    return () => clearTimeout(timer);
+  }, [isLoading, summary, messageId]);
+
   // Shimmer loading state
   if (isLoading) {
     return (
@@ -123,7 +138,7 @@ const SummaryLine: React.FC<SummaryLineProps> = ({
           {hasContext ? '🧠' : '🤖'}
         </Text>
         <View style={styles.summaryTextContainer}>
-          <Text style={styles.summaryText} numberOfLines={2}>
+          <Text style={styles.summaryText}>
             {summary.summaryText}
           </Text>
           
@@ -215,9 +230,11 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: '#1a1a1a',
     fontWeight: '500',
+    flexShrink: 1,
   },
   summaryTextContainer: {
     flex: 1,
+    flexShrink: 1,
   },
   
   // RAG Context indicators

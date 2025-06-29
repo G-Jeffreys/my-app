@@ -15,6 +15,7 @@ import { DEFAULT_TTL_PRESET } from "../config/messaging";
 interface AuthState {
   user: (User & { uid: string }) | null;
   loading: boolean;
+  isSigningIn: boolean;
   error: string | null;
   initialize: () => () => void;
   handleGoogleSignIn: (id_token: string | undefined) => Promise<void>;
@@ -26,6 +27,7 @@ interface AuthState {
 export const useAuth = create<AuthState>((set) => ({
   user: null,
   loading: true,
+  isSigningIn: false,
   error: null,
   initialize: () => {
     console.log('[Auth] Initializing web Firebase auth state listener');
@@ -34,7 +36,9 @@ export const useAuth = create<AuthState>((set) => ({
         "[Auth] Auth state changed:",
         firebaseUser ? firebaseUser.email : "signed out"
       );
+      
       if (firebaseUser) {
+        console.log('[Auth] User authenticated, fetching user document from Firestore...');
         try {
           // Fetch the full user document from Firestore
           const userDocRef = doc(firestore, "users", firebaseUser.uid);
@@ -42,6 +46,7 @@ export const useAuth = create<AuthState>((set) => ({
           
           if (userDoc.exists()) {
             const userData = userDoc.data();
+            console.log('[Auth] ✅ User document found in Firestore');
             set({
               user: {
                 id: firebaseUser.uid,
@@ -53,6 +58,7 @@ export const useAuth = create<AuthState>((set) => ({
                 defaultTtl: userData?.defaultTtl || DEFAULT_TTL_PRESET,
               } as User & { uid: string },
               loading: false,
+              isSigningIn: false,
             });
           } else {
             // Fallback to Firebase Auth data if Firestore doc doesn't exist
@@ -79,6 +85,7 @@ export const useAuth = create<AuthState>((set) => ({
                   uid: firebaseUser.uid,
                 } as User & { uid: string },
                 loading: false,
+                isSigningIn: false,
               });
             } catch (createError) {
               console.error('[Auth] ❌ Failed to create user document:', createError);
@@ -89,6 +96,7 @@ export const useAuth = create<AuthState>((set) => ({
                   uid: firebaseUser.uid,
                 } as User & { uid: string },
                 loading: false,
+                isSigningIn: false,
               });
             }
           }
@@ -121,48 +129,53 @@ export const useAuth = create<AuthState>((set) => ({
               uid: firebaseUser.uid,
             } as User & { uid: string },
             loading: false,
+            isSigningIn: false,
           });
         }
       } else {
-        set({ user: null, loading: false });
+        console.log('[Auth] User signed out');
+        set({ user: null, loading: false, isSigningIn: false });
       }
     });
     return unsubscribe;
   },
   handleGoogleSignIn: async (id_token) => {
+    console.log('[Auth] Google sign-in initiated with token:', id_token ? 'Present' : 'Missing');
     if (id_token) {
-      set({ loading: true, error: null });
+      set({ isSigningIn: true, loading: true, error: null });
       try {
+        console.log('[Auth] Creating Google credential...');
         const credential = GoogleAuthProvider.credential(id_token);
+        console.log('[Auth] Signing in with Google credential...');
         await signInWithCredential(auth, credential);
-        set({ loading: false });
+        console.log('[Auth] Google sign-in successful!');
       } catch (error: any) {
-        console.error("Firebase sign in error", error);
-        set({ loading: false, error: "Failed to sign in with Google." });
+        console.error('[Auth] Google Firebase sign in error:', error);
+        set({ loading: false, isSigningIn: false, error: "Failed to sign in with Google." });
       }
     } else {
-      set({ loading: false, error: "Google Sign-In was cancelled or failed." });
+      console.warn('[Auth] Google Sign-In was cancelled or failed - no id token');
+      set({ loading: false, isSigningIn: false, error: "Google Sign-In was cancelled or failed." });
     }
   },
   handleGitHubSignIn: async (access_token) => {
     console.log('[Auth] GitHub sign-in initiated with token:', access_token ? 'Present' : 'Missing');
     if (access_token) {
-      set({ loading: true, error: null });
+      set({ isSigningIn: true, loading: true, error: null });
       try {
         console.log('[Auth] Creating GitHub credential...');
         const credential = GithubAuthProvider.credential(access_token);
         console.log('[Auth] Signing in with GitHub credential...');
         await signInWithCredential(auth, credential);
         console.log('[Auth] GitHub sign-in successful!');
-        set({ loading: false });
       } catch (error: any) {
         console.error('[Auth] GitHub Firebase sign in error:', error);
         console.error('[Auth] Error details:', JSON.stringify(error, null, 2));
-        set({ loading: false, error: "Failed to sign in with GitHub." });
+        set({ loading: false, isSigningIn: false, error: "Failed to sign in with GitHub." });
       }
     } else {
       console.warn('[Auth] GitHub Sign-In was cancelled or failed - no access token');
-      set({ loading: false, error: "GitHub Sign-In was cancelled or failed." });
+      set({ loading: false, isSigningIn: false, error: "GitHub Sign-In was cancelled or failed." });
     }
   },
   signOut: async () => {
@@ -171,11 +184,12 @@ export const useAuth = create<AuthState>((set) => ({
       set({ loading: true, error: null });
       await firebaseSignOut(auth);
       console.log('[Auth] Firebase sign out successful');
-      set({ user: null, loading: false, error: null });
+      set({ user: null, loading: false, isSigningIn: false, error: null });
     } catch (error: any) {
       console.error('[Auth] Sign out error:', error);
       set({ 
         loading: false, 
+        isSigningIn: false,
         error: 'Failed to sign out. Please try again.' 
       });
       throw error;

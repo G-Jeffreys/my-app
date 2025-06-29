@@ -17,7 +17,7 @@ fi
 
 # Check Cloud Run service
 echo -e "\n2️⃣ Checking Cloud Run service..."
-curl -s https://moderation-worker-435345795137.us-central1.run.app/health | jq '.'
+curl -s https://moderation-worker-yyaoaphbjq-uc.a.run.app/health | jq '.'
 
 # Check Cloud Tasks queue
 echo -e "\n3️⃣ Checking Cloud Tasks queue..."

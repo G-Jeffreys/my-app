@@ -146,7 +146,7 @@ export default function CreateGroupScreen() {
         lastMessageAt: null,
         lastMessageText: null,
         messageCount: 0,
-        ragEnabled: false, // Future-proofing for RAG
+        ragEnabled: true, // Enable RAG by default for enhanced summaries
       };
 
       const conversationRef = await addDoc(collection(firestore, 'conversations'), conversationData);

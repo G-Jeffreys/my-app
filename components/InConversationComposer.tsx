@@ -7,8 +7,10 @@ import {
   StyleSheet,
   Alert,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { 
   collection, 
   addDoc, 
@@ -34,6 +36,7 @@ const InConversationComposer: React.FC<InConversationComposerProps> = ({
 }) => {
   const { user } = useAuth();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [ttl, setTtl] = useState<TtlPreset>(DEFAULT_TTL_PRESET);
   const [isLoading, setIsLoading] = useState(false);
@@ -81,8 +84,8 @@ const InConversationComposer: React.FC<InConversationComposerProps> = ({
       
       console.log('[InConversationComposer] Text message sent successfully:', messageRef.id);
 
-      // Create receipts for all group participants
-      await createGroupReceipts(messageRef.id, conversationId, user.uid);
+      // Note: Receipts are now created automatically by recipients when they load the message
+      // This is handled by the useReceiptTracking hook to comply with new security rules
       
       const newMessage = { 
         id: messageRef.id, 
@@ -106,48 +109,8 @@ const InConversationComposer: React.FC<InConversationComposerProps> = ({
     }
   };
 
-  // Helper function to create receipts for group messages
-  const createGroupReceipts = async (messageId: string, conversationId: string, senderId: string) => {
-    try {
-      console.log('[InConversationComposer] Creating group receipts for:', { messageId, conversationId });
-      
-      // Get conversation participants
-      const conversationRef = doc(firestore, 'conversations', conversationId);
-      const conversationSnap = await getDoc(conversationRef);
-      
-      if (!conversationSnap.exists()) {
-        throw new Error('Conversation not found');
-      }
-      
-      const conversationData = conversationSnap.data();
-      const participantIds = conversationData.participantIds || [];
-      
-      console.log('[InConversationComposer] Found participants:', { count: participantIds.length });
-      
-      // Create receipts for all participants except sender
-      const receiptPromises = participantIds
-        .filter((participantId: string) => participantId !== senderId)
-        .map(async (participantId: string) => {
-          const receiptId = `${messageId}_${participantId}`;
-          const receiptData = {
-            messageId,
-            userId: participantId,
-            conversationId,
-            receivedAt: serverTimestamp(),
-            viewedAt: null,
-          };
-          
-          return setDoc(doc(firestore, 'receipts', receiptId), receiptData);
-        });
-      
-      await Promise.all(receiptPromises);
-      console.log('[InConversationComposer] Group receipts created:', { count: receiptPromises.length });
-      
-    } catch (error) {
-      console.error('[InConversationComposer] Error creating group receipts:', error);
-      // Don't throw - message was sent successfully, receipt creation is secondary
-    }
-  };
+  // Note: Group receipts are now created automatically by recipients when they load messages
+  // This is handled by the useReceiptTracking hook to comply with new security rules
 
   const handleSendPhoto = () => {
     console.log('[InConversationComposer] Opening camera for group message');
@@ -159,11 +122,11 @@ const InConversationComposer: React.FC<InConversationComposerProps> = ({
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingBottom: Math.max(12, insets.bottom) }]}>
       {/* TTL Selector */}
       <View style={styles.ttlContainer}>
         <Text style={styles.ttlLabel}>Message expires in:</Text>
-        <TtlSelector selectedTtl={ttl} onTtlChange={setTtl} />
+        <TtlSelector selectedTtl={ttl} onTtlChange={setTtl} compact={true} />
       </View>
 
       {/* Text Input */}

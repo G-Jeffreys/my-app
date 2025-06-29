@@ -1,8 +1,8 @@
 import { initializeApp, getApp, getApps } from "firebase/app";
 import { getAuth, Auth, initializeAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
-import { getDatabase } from "firebase/database";
+import { getFirestore, Firestore } from "firebase/firestore";
+import { getStorage, FirebaseStorage } from "firebase/storage";
+import { getDatabase, Database } from "firebase/database";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { env } from "../env";
@@ -99,7 +99,9 @@ try {
 }
 
 // Initialize other Firebase services with error handling
-let firestore, storage, database;
+let firestore: Firestore;
+let storage: FirebaseStorage | undefined;
+let database: Database | undefined;
 
 try {
   console.log('[Firebase] Initializing Firestore...');
@@ -146,4 +148,4 @@ if (!firestore) {
 export { app, auth, firestore, storage, database };
 
 // Export aliases for backward compatibility
-export { app as firebaseApp }; 
+export const firebaseApp = app; 

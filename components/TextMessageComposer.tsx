@@ -103,10 +103,9 @@ const TextMessageComposer: React.FC<TextMessageComposerProps> = ({
         isGroup: !!conversationId
       });
 
-      // For group messages, we need to create receipts for all participants
-      if (conversationId) {
-        await createGroupReceipts(messageRef.id, conversationId, user.uid);
-      } else if (recipientId) {
+      // For group messages, receipts are now created automatically by recipients
+      // This is handled by the useReceiptTracking hook to comply with new security rules
+      if (recipientId) {
         // For individual messages, create receipt for the recipient
         await createIndividualReceipt(messageRef.id, recipientId);
       }
@@ -132,48 +131,8 @@ const TextMessageComposer: React.FC<TextMessageComposerProps> = ({
     }
   };
 
-  // Helper function to create receipts for group messages
-  const createGroupReceipts = async (messageId: string, conversationId: string, senderId: string) => {
-    try {
-      logTextMessage('📧 Creating group receipts', { messageId, conversationId });
-      
-      // Get conversation participants
-      const conversationRef = doc(firestore, 'conversations', conversationId);
-      const conversationSnap = await getDoc(conversationRef);
-      
-      if (!conversationSnap.exists()) {
-        throw new Error('Conversation not found');
-      }
-      
-      const conversationData = conversationSnap.data();
-      const participantIds = conversationData.participantIds || [];
-      
-      logTextMessage('📧 Found participants', { count: participantIds.length, participantIds });
-      
-      // Create receipts for all participants except sender
-      const receiptPromises = participantIds
-        .filter((participantId: string) => participantId !== senderId)
-        .map(async (participantId: string) => {
-          const receiptId = `${messageId}_${participantId}`;
-          const receiptData = {
-            messageId,
-            userId: participantId,
-            conversationId,
-            receivedAt: serverTimestamp(),
-            viewedAt: null,
-          };
-          
-          return setDoc(doc(firestore, 'receipts', receiptId), receiptData);
-        });
-      
-      await Promise.all(receiptPromises);
-      logTextMessage('✅ Group receipts created', { count: receiptPromises.length });
-      
-    } catch (error) {
-      logTextMessage('❌ Error creating group receipts', error);
-      // Don't throw - message was sent successfully, receipt creation is secondary
-    }
-  };
+  // Note: Group receipts are now created automatically by recipients when they load messages
+  // This is handled by the useReceiptTracking hook to comply with new security rules
 
   // Helper function to create receipt for individual messages
   const createIndividualReceipt = async (messageId: string, recipientId: string) => {

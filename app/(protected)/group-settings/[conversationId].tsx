@@ -14,6 +14,9 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   doc,
   getDoc,
+  collection,
+  query,
+  getDocs,
   updateDoc,
   deleteDoc,
   arrayRemove,
@@ -105,16 +108,39 @@ export default function GroupSettingsScreen() {
 
       console.log('[GroupSettings] Loading available friends');
       
-      // Get user's friends
-      const friendsSnapshot = await getDoc(doc(firestore, 'users', user.uid, 'friends'));
-      if (!friendsSnapshot.exists()) {
+      // Query the current user's friends subcollection
+      const friendsQuery = query(collection(firestore, 'users', user.uid, 'friends'));
+
+      const friendsSnapshot = await getDocs(friendsQuery);
+      console.log('[GroupSettings] Found', friendsSnapshot.size, 'friend documents');
+
+      if (friendsSnapshot.empty) {
         setAvailableFriends([]);
         return;
       }
 
-      // This is a simplified approach - in reality you'd query the friends subcollection
-      // For now, we'll just show an empty list since friend management is complex
-      setAvailableFriends([]);
+      // Build list of friend user docs who are NOT already in the conversation
+      const friendPromises = friendsSnapshot.docs.map(async (friendDoc) => {
+        const friendData = friendDoc.data() as Friend;
+
+        // Skip if already a participant
+        if (currentParticipants.includes(friendData.friendId)) {
+          return null;
+        }
+
+        const friendUserDoc = await getDoc(doc(firestore, 'users', friendData.friendId));
+        if (friendUserDoc.exists()) {
+          return { id: friendUserDoc.id, ...friendUserDoc.data() } as User;
+        }
+        return null;
+      });
+
+      const friendsList = (await Promise.all(friendPromises)).filter(
+        (u): u is User => u !== null
+      );
+
+      console.log('[GroupSettings] Available friends:', friendsList.length);
+      setAvailableFriends(friendsList);
       
     } catch (error) {
       console.error('[GroupSettings] Error loading friends:', error);
@@ -245,6 +271,28 @@ export default function GroupSettingsScreen() {
     } catch (error) {
       console.error('[GroupSettings] Error leaving group:', error);
       Alert.alert('Error', 'Failed to leave group');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleEnableRAG = async () => {
+    if (!conversation || !user) return;
+
+    try {
+      console.log('[GroupSettings] Enabling RAG for conversation:', conversationId);
+      setUpdating(true);
+
+      await updateDoc(doc(firestore, 'conversations', conversationId), {
+        ragEnabled: true,
+      });
+
+      setConversation({ ...conversation, ragEnabled: true });
+      Alert.alert('Success', 'RAG (AI conversation summaries) has been enabled for this group!');
+      
+    } catch (error) {
+      console.error('[GroupSettings] Error enabling RAG:', error);
+      Alert.alert('Error', 'Failed to enable RAG');
     } finally {
       setUpdating(false);
     }
@@ -400,6 +448,34 @@ export default function GroupSettingsScreen() {
             </Text>
           </TouchableOpacity>
         </View>
+
+        <Text style={styles.sectionTitle}>Group Actions</Text>
+        
+        {/* RAG Controls */}
+        {__DEV__ && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>🧠 RAG Controls (Debug)</Text>
+            <View style={styles.ragControlsContainer}>
+              <Text style={styles.ragStatusText}>
+                RAG Status: {conversation?.ragEnabled ? '✅ Enabled' : '❌ Disabled'}
+              </Text>
+              {!conversation?.ragEnabled && (
+                <TouchableOpacity 
+                  style={styles.enableRagButton}
+                  onPress={handleEnableRAG}
+                >
+                  <Text style={styles.enableRagButtonText}>Enable RAG</Text>
+                </TouchableOpacity>
+              )}
+              <Text style={styles.ragInfoText}>
+                Message Count: {conversation?.messageCount || 0}
+              </Text>
+              <Text style={styles.ragInfoText}>
+                Last Processed: {conversation?.lastProcessedMessageCount || 0}
+              </Text>
+            </View>
+          </View>
+        )}
       </View>
     </SafeAreaView>
   );
@@ -566,5 +642,31 @@ const styles = StyleSheet.create({
   },
   leaveButtonText: {
     color: 'white',
+  },
+  ragControlsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  ragStatusText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  enableRagButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    backgroundColor: '#2196f3',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  enableRagButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  ragInfoText: {
+    fontSize: 12,
+    color: '#666',
   },
 }); 

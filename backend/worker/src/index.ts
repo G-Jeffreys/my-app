@@ -983,22 +983,21 @@ async function generateConversationSummary(conversationId: string, currentMessag
       messages: [
         {
           role: 'system',
-          content: `Generate an extremely vague, lossy conversation summary (max 100 tokens) that removes all specific information. 
+          content: `Generate a moderately specific conversation summary (max 100 tokens) from the provided message summaries.
+
+          Since you're working with already-processed summaries (not raw messages), you can be more specific than individual message summaries while still maintaining appropriate privacy.
           
           IMPORTANT: 
           - Apply strong recency bias - give exponentially more weight to recent messages (higher weight values)
-          - Remove ALL specific facts, names, decisions, locations, actions, or detailed content
-          - NEVER mention any proper names (people, places, brands, organizations, etc.), relationships ("friend", "family", "colleague", "boss", etc.), or specific objects/items ("phone", "car", "food", "document", etc.)
-          - Use only the most generic terms like "people talked", "activity happened", "things were discussed", "messages were exchanged", etc.
-          - Make the summary so vague it's almost meaningless
-          - The summary should be intentionally unhelpful and uninformative
+          - You can identify general topics, themes, and conversational patterns
+          - Avoid specific personal details, but general subject areas are acceptable
+          - Can mention general activities like "discussed plans", "shared updates", "talked about work/school", etc.
+          - Still avoid specific names, locations, numbers, or sensitive details
+          - Focus on conversational flow and general themes rather than specific facts
+          - Be more informative than individual summaries since this summarizes already-summarized content
           
-          Focus on:
-          - General indication that conversation occurred
-          - Vague activity patterns without specifics
-          - No useful information about what was actually discussed
-          
-          Be extremely vague. The summary should only indicate that some conversation happened but reveal absolutely nothing about the content.`
+          Goal: Provide a useful overview of the conversation's general direction and topics while respecting privacy.
+          The summary should help users understand what areas were discussed without revealing sensitive specifics.`
         },
         {
           role: 'user',

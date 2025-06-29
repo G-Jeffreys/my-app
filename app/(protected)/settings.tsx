@@ -258,10 +258,10 @@ export default function SettingsScreen() {
         title="Notice"
         message={updateMessage}
         confirmText="OK"
-        cancelText="OK"
         confirmColor="blue"
         onConfirm={dismissUpdateDialog}
         onCancel={dismissUpdateDialog}
+        singleButton={true}
       />
     </SafeAreaView>
   );

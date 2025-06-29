@@ -149,7 +149,18 @@ The focus is on AI-powered social features that enhance ephemeral content sharin
 | FR‑11 | The client shall render summaries with RAG indicators and interactive action sheets.            | Must     | 🔮 **SCAFFOLDED** |
 | FR‑12 | The system shall provide semantic search across conversation history via natural language.      | Should   | 🔮 **SCAFFOLDED** |
 | FR‑13 | AI shall resolve pronouns and context references using conversation history (85% accuracy).     | Should   | 🔮 **SCAFFOLDED** |
-| FR‑14 | Video messages shall receive basic placeholder summaries pending video analysis implementation.  | Should   | ⚠️ **LIMITED** |
+| FR‑14 | Video messages shall receive basic placeholder summaries pending video analysis implementation (see Section 14 - Stretch Goals for intelligent video summaries).  | Should   | ⚠️ **LIMITED** |
+
+### 6.3 Stretch Goals (Future Implementation)
+
+| FR‑ID | Description                                                                                      | Priority | Status |
+| ----- | ------------------------------------------------------------------------------------------------ | -------- | ------ |
+| FR‑15 | The system shall generate intelligent video summaries using vision models for scene analysis and action recognition. | Could    | 🎯 **STRETCH GOAL** |
+| FR‑16 | Video summaries shall include temporal understanding, object detection, and social context integration. | Could    | 🎯 **STRETCH GOAL** |
+| FR‑17 | The system shall provide vision-based content moderation for video streams with 98%+ accuracy. | Could    | 🎯 **STRETCH GOAL** |
+| FR‑18 | The system shall deliver real-time push notifications within 5 seconds of content sharing. | Could    | 🎯 **STRETCH GOAL** |
+| FR‑19 | Push notifications shall use AI-powered prioritization based on social relationships and engagement patterns. | Could    | 🎯 **STRETCH GOAL** |
+| FR‑20 | The system shall provide granular notification privacy controls and intelligent batching to prevent notification fatigue. | Could    | 🎯 **STRETCH GOAL** |
 
 ---
 
@@ -248,7 +259,7 @@ Message Created ──► Cloud Tasks ──► Cloud Run Worker ──► AI Pr
 5. **Platform Adoption**: 75% 7-day retention rate with AI features active
 6. **Content Safety**: 98% harmful content detection before friends see it
 
-**Note**: Success criteria apply to photos, text posts, and stories. Video content currently receives basic placeholder summaries pending advanced video analysis.
+**Note**: Success criteria apply to photos, text posts, and stories. Video content currently receives basic placeholder summaries pending advanced video analysis implementation (see Section 14 - Stretch Goals for intelligent video summaries and push notifications).
 
 ---
 
@@ -263,22 +274,98 @@ Message Created ──► Cloud Tasks ──► Cloud Run Worker ──► AI Pr
 
 ---
 
-## 14. Out‑of‑Scope (Current Version)
+## 14. Stretch Goals
+
+### 🎯 **Video Summaries with Vision Models**
+
+**Priority**: High-value enhancement for complete AI-powered content understanding
+
+**Description**: Implement intelligent video content analysis using advanced vision models to generate contextual summaries of video content, replacing current basic placeholder summaries.
+
+#### User Stories
+| User Story ID | Story | Acceptance Criteria | Implementation Status |
+| ------------- | ----- | ------------------- | -------------------- |
+| **VID1** | *As a content creator*, I can share videos knowing AI will capture key visual moments and actions in intelligent summaries | Video summaries include scene description, action recognition, and object detection | 🎯 **STRETCH GOAL** |
+| **VID2** | *As a friend*, I can search for "that video where we were at the beach" and find relevant video content through AI vision understanding | Vision-based search accurately identifies video content and scenes | 🎯 **STRETCH GOAL** |
+| **VID3** | *As a group member*, AI video summaries understand our shared activities and reference previous video conversations | Video summaries include social context and activity recognition | 🎯 **STRETCH GOAL** |
+| **VID4** | *As a privacy-conscious user*, video content moderation automatically detects inappropriate visual content before sharing | Vision-based content moderation with 98%+ accuracy for video | 🎯 **STRETCH GOAL** |
+
+#### Technical Requirements
+- **Vision Model Integration**: GPT-4V or specialized video analysis models for frame-by-frame understanding
+- **Video Processing Pipeline**: Keyframe extraction, scene segmentation, and temporal analysis
+- **Enhanced Moderation**: Computer vision-based content safety for video streams
+- **Performance Targets**: Video summary generation within 10s P95 for ≤10s videos
+
+#### Implementation Approach
+1. **Phase 1**: Keyframe extraction and static image analysis of video frames
+2. **Phase 2**: Temporal video analysis for action and movement recognition  
+3. **Phase 3**: Advanced scene understanding and social context integration
+4. **Phase 4**: Real-time video processing for live content analysis
+
+### 📱 **Push Notifications**
+
+**Priority**: Essential for user engagement and real-time social interaction
+
+**Description**: Implement intelligent push notification system that respects ephemeral content privacy while maximizing social engagement and timely content delivery.
+
+#### User Stories
+| User Story ID | Story | Acceptance Criteria | Implementation Status |
+| ------------- | ----- | ------------------- | -------------------- |
+| **PUSH1** | *As a social user*, I receive immediate notifications when friends share content, ensuring I don't miss ephemeral moments | Real-time push notifications with <5s delivery time | 🎯 **STRETCH GOAL** |
+| **PUSH2** | *As a friend*, I get smart notifications that prioritize close friends and active conversations without overwhelming me | AI-powered notification prioritization based on social graph | 🎯 **STRETCH GOAL** |
+| **PUSH3** | *As a group member*, I receive group-specific notifications for shared content with intelligent batching to avoid spam | Group notification management with customizable settings | 🎯 **STRETCH GOAL** |
+| **PUSH4** | *As a content creator*, I can see delivery confirmations and know when friends have been notified about my shared content | Notification delivery tracking and analytics | 🎯 **STRETCH GOAL** |
+| **PUSH5** | *As a privacy-focused user*, I can customize notification content to balance engagement with privacy preferences | Granular notification privacy controls and content masking | 🎯 **STRETCH GOAL** |
+
+#### Notification Types
+- **Immediate Social**: New content from close friends (highest priority)
+- **Group Activity**: Group conversations and shared moments (medium priority)  
+- **Memory Insights**: AI-generated summaries and memory discoveries (low priority)
+- **System Updates**: Friend requests, content expiration warnings (as needed)
+
+#### Technical Requirements
+- **Multi-Platform Support**: iOS APNs, Android FCM, and web push notifications
+- **Intelligent Batching**: Group multiple notifications to prevent notification fatigue
+- **Privacy-Preserving**: Notification content respects ephemeral content principles
+- **Performance Targets**: 95% delivery success rate within 5 seconds
+
+#### Implementation Approach
+1. **Phase 1**: Basic push notification infrastructure with Firebase Cloud Messaging
+2. **Phase 2**: Smart notification prioritization based on social relationships
+3. **Phase 3**: AI-powered notification content optimization and batching
+4. **Phase 4**: Advanced analytics and personalized notification strategies
+
+### 🔗 **Integration with Core Platform**
+
+Both stretch goals integrate seamlessly with existing architecture:
+
+**Video Summaries**: Extend current AI processing pipeline to include video analysis workers
+**Push Notifications**: Leverage existing social graph and engagement analytics for intelligent delivery
+
+**Resource Requirements**: Additional OpenAI API costs for vision models, Firebase Cloud Messaging setup, enhanced Cloud Run compute for video processing
+
+**Success Metrics**:
+- Video summaries: 80% user satisfaction with video content understanding
+- Push notifications: 40% increase in content engagement within first hour of sharing
+
+---
+
+## 15. Out‑of‑Scope (Current Version)
 
 ### **Not Currently Implemented**
-- **Video Content Analysis**: Intelligent video summarization (currently uses basic placeholders)
+- **Advanced Video Content Analysis**: Intelligent video summarization beyond basic placeholders (see Section 14 - Stretch Goals)
+- **Push Notification System**: Real-time user engagement notifications (see Section 14 - Stretch Goals)
 - **Video Frame Extraction**: Keyframe analysis for video content understanding
-- **Video-Specific AI Models**: Specialized models for video content processing
-- **Advanced Video Moderation**: Vision-based analysis of video content
+- **Advanced Video Moderation**: Vision-based analysis of video content streams
 
-### **Future Considerations**
+### **Future Considerations Beyond Stretch Goals**
 - Advanced conversation analytics dashboard
 - Multi-language AI support  
-- Voice message transcription
-- Custom AI model training
-- Real-time video analysis pipeline
+- Voice message transcription and analysis
+- Custom AI model training for personalized content understanding
+- Real-time collaborative content creation
 
-**Note**: Core ephemeral messaging and group chat features are **fully implemented and production-ready**. AI features are ready for text and image content, with video content receiving basic placeholder summaries pending future video analysis implementation.
+**Note**: Core ephemeral messaging and group chat features are **fully implemented and production-ready**. AI features are ready for text and image content, with video content receiving basic placeholder summaries pending stretch goal implementation.
 
 ---
 
@@ -302,10 +389,11 @@ Message Created ──► Cloud Tasks ──► Cloud Run Worker ──► AI Pr
 - [ ] Deploy comprehensive social AI analytics dashboard
 - [ ] Scale to full social media user base
 
-### Future Social Development
-- [ ] Implement video frame extraction for story/video content analysis
-- [ ] Integrate video-specific AI models for intelligent video story summarization
-- [ ] Deploy enhanced social content moderation pipeline
+### Future Social Development (Stretch Goals - See Section 14)
+- [ ] **Video Summaries with Vision Models**: Implement video frame extraction and intelligent video content analysis
+- [ ] **Video AI Integration**: Deploy video-specific AI models for intelligent video story summarization  
+- [ ] **Push Notifications**: Implement real-time notification system with smart prioritization
+- [ ] **Enhanced Video Moderation**: Deploy vision-based content moderation pipeline for video streams
 - [ ] Add AI-powered friend and content recommendations
 
 The project is uniquely positioned for **rapid AI social feature deployment** with comprehensive social platform infrastructure already in place.

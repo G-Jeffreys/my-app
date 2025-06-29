@@ -10,6 +10,7 @@ interface ConfirmDialogProps {
   confirmColor?: 'red' | 'blue' | 'green';
   onConfirm: () => void;
   onCancel: () => void;
+  singleButton?: boolean; // New prop to show only one button
 }
 
 export default function ConfirmDialog({
@@ -20,7 +21,8 @@ export default function ConfirmDialog({
   cancelText = 'Cancel',
   confirmColor = 'red',
   onConfirm,
-  onCancel
+  onCancel,
+  singleButton = false
 }: ConfirmDialogProps) {
   
   const getConfirmButtonStyle = () => {
@@ -48,16 +50,18 @@ export default function ConfirmDialog({
           <Text className="text-xl font-bold text-gray-900 mb-3">{title}</Text>
           <Text className="text-gray-700 mb-6 leading-5">{message}</Text>
           
-          <View className="flex-row justify-end space-x-3">
-            <TouchableOpacity 
-              onPress={onCancel}
-              className="px-4 py-2 bg-gray-200 rounded-lg mr-3"
-            >
-              <Text className="text-gray-700 font-semibold">{cancelText}</Text>
-            </TouchableOpacity>
+          <View className={`flex-row ${singleButton ? 'justify-center' : 'justify-end space-x-3'}`}>
+            {!singleButton && (
+              <TouchableOpacity 
+                onPress={onCancel}
+                className="px-4 py-2 bg-gray-200 rounded-lg mr-3"
+              >
+                <Text className="text-gray-700 font-semibold">{cancelText}</Text>
+              </TouchableOpacity>
+            )}
             
             <TouchableOpacity 
-              onPress={onConfirm}
+              onPress={singleButton ? onConfirm : onConfirm}
               className={`px-4 py-2 ${getConfirmButtonStyle()} rounded-lg`}
             >
               <Text className="text-white font-semibold">{confirmText}</Text>

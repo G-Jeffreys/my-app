@@ -163,9 +163,10 @@ export default function CreateGroupScreen() {
           {
             text: 'OK',
             onPress: () => {
-              // Navigate to the new group chat
+              // Navigate to the new group conversation page
+              console.log('[CreateGroupScreen] 🚀 Navigating to group conversation:', conversationRef.id);
               router.replace({
-                pathname: '/(protected)/compose-text',
+                pathname: '/(protected)/group-conversation/[conversationId]',
                 params: { conversationId: conversationRef.id }
               });
             }
